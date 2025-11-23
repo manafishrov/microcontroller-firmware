@@ -10,22 +10,18 @@ build: build-dshot build-pwm
 build-dshot:
 	mkdir -p $(BUILD_DIR)
 	cd $(BUILD_DIR) && cmake .. $(CMAKE_FLAGS) -DFIRMWARE_TYPE=dshot
-	cmake --build $(BUILD_DIR) --target dshot_firmware
+	cmake --build $(BUILD_DIR) --target microcontroller_firmware
 
 build-pwm:
 	mkdir -p $(BUILD_DIR)
 	cd $(BUILD_DIR) && cmake .. $(CMAKE_FLAGS) -DFIRMWARE_TYPE=pwm
-	cmake --build $(BUILD_DIR) --target pwm_firmware
+	cmake --build $(BUILD_DIR) --target microcontroller_firmware
 
 flash-dshot: build-dshot
-	picotool load $(BUILD_DIR)/dshot/dshot_firmware.uf2 -f
+	picotool load $(BUILD_DIR)/dshot/microcontroller_firmware.uf2 -f
 
 flash-pwm: build-pwm
-	picotool load $(BUILD_DIR)/pwm/pwm_firmware.uf2 -f
-
-copy: build
-	cp $(BUILD_DIR)/dshot/dshot_firmware.uf2 ../src/microcontroller_firmware/dshot.uf2
-	cp $(BUILD_DIR)/pwm/pwm_firmware.uf2 ../src/microcontroller_firmware/pwm.uf2
+	picotool load $(BUILD_DIR)/pwm/microcontroller_firmware.uf2 -f
 
 clean:
 	rm -rf $(BUILD_DIR)
@@ -43,7 +39,6 @@ help:
 	@echo "  build-pwm     - Build pwm firmware"
 	@echo "  flash-dshot   - Build and flash dshot"
 	@echo "  flash-pwm     - Build and flash pwm"
-	@echo "  copy          - Build and copy uf2 to main firmware"
 	@echo "  clean         - Clean build dir"
 	@echo "  format        - Format C code"
 	@echo "  lint          - Lint C code"

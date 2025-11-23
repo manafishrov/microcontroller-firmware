@@ -1,6 +1,6 @@
-# Manafish Pico Firmware
+# Microcontroller Firmware
 
-The Pico in the Manafish ROV is responsible for sending signals to the thrusters. All required dependencies for working with it are included in the main firmware on the Pi, so you can use the Manafish Pi for developing it.
+The microcontroller in the Manafish ROV is responsible for sending signals to the thrusters. All required dependencies for working with it are included in the main firmware on the Pi, so you can use the Manafish Pi for developing it.
 
 ## Prerequisites
 
@@ -16,7 +16,6 @@ Run `make help` for a full list. Key targets:
 - `make build` - Build both DShot and PWM firmware
 - `make build-dshot` / `make build-pwm` - Build specific firmware
 - `make flash-dshot` / `make flash-pwm` - Build and flash
-- `make copy` - Build and copy to main firmware
 - `make clean` - Clean build directory
 - `make format` - Format code
 - `make lint` - Lint code
@@ -49,7 +48,7 @@ To build both:
 make build
 ```
 
-The `.uf2` files will be in `build/dshot/dshot_firmware.uf2` and `build/pwm/pwm_firmware.uf2`. For rebuilds, the Makefile reconfigures only when needed.
+The `.uf2` files will be in `build/dshot/microcontroller_firmware.uf2` and `build/pwm/microcontroller_firmware.uf2`. For rebuilds, the Makefile reconfigures only when needed.
 
 ## Flash
 
@@ -68,16 +67,6 @@ make flash-pwm
 ```
 
 This works regardless of BOOTSEL mode.
-
-## Add to Firmware
-
-To copy the Pico firmware into the main Manafish firmware:
-
-```sh
-make copy
-```
-
-This builds both and copies `dshot_firmware.uf2` to `src/microcontroller_firmware/dshot.uf2` and `pwm_firmware.uf2` to `src/microcontroller_firmware/`.
 
 ## View firmware serial output
 
