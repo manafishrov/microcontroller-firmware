@@ -118,13 +118,13 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller,
   if (is_edt) {
     m = (edt >> 4) & 0xFF;
     switch (top) {
-    case 0x2: type = DSHOT_TELEMETRY_TEMPERATURE; value = m; break;
-    case 0x4: type = DSHOT_TELEMETRY_VOLTAGE; value = m / 4; break;
-    case 0x6: type = DSHOT_TELEMETRY_CURRENT; value = m; break;
-    case 0x8: type = DSHOT_TELEMETRY_DEBUG1; value = m; break;
-    case 0xA: type = DSHOT_TELEMETRY_DEBUG2; value = m; break;
-    case 0xC: type = DSHOT_TELEMETRY_STRESS; value = m; break;
-    case 0xE: type = DSHOT_TELEMETRY_STATUS; value = m; break;
+    case EDT_PREFIX_TEMPERATURE: type = DSHOT_TELEMETRY_TEMPERATURE; value = m; break;
+    case EDT_PREFIX_VOLTAGE: type = DSHOT_TELEMETRY_VOLTAGE; value = m / 4; break;
+    case EDT_PREFIX_CURRENT: type = DSHOT_TELEMETRY_CURRENT; value = m; break;
+    case EDT_PREFIX_DEBUG1: type = DSHOT_TELEMETRY_DEBUG1; value = m; break;
+    case EDT_PREFIX_DEBUG2: type = DSHOT_TELEMETRY_DEBUG2; value = m; break;
+    case EDT_PREFIX_STRESS: type = DSHOT_TELEMETRY_STRESS; value = m; break;
+    case EDT_PREFIX_STATUS: type = DSHOT_TELEMETRY_STATUS; value = m; break;
     default:
       motor->stats.rx_bad_type++;
       return;
@@ -134,6 +134,9 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller,
     e = (edt & 0xE000) >> 13;
     m = (edt & 0x1FFF) >> 4;
     type = DSHOT_TELEMETRY_ERPM;
+    // Note: While the spec refers to the raw value as "eRPM", standard DSHOT
+    // implementations transmit the commutation period in microseconds.
+    // We convert this period to eRPM: (1,000,000 us/s * 60 s/min) / period
     value = m << e;
     if (value == 0xff80)
       value = 0;
