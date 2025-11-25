@@ -113,7 +113,7 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller,
   int value;
 
   uint8_t top = (edt & 0xF000) >> 12;
-  bool is_edt = (top != 0 && (top & 0x8) == 0);
+  bool is_edt = (top != 0 && (top & 0x1) == 0);
 
   if (is_edt) {
     m = (edt >> 4) & 0xFF;
