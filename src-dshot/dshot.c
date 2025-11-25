@@ -124,12 +124,7 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller,
     case 0x8: type = DSHOT_TELEMETRY_DEBUG1; value = m; break;
     case 0xA: type = DSHOT_TELEMETRY_DEBUG2; value = m; break;
     case 0xC: type = DSHOT_TELEMETRY_STRESS; value = m; break;
-    case 0xE:
-      if ((edt & 0x0FFF) == 0x000) {
-        type = DSHOT_TELEMETRY_EDT_VERSION;
-        value = m;
-        break;
-      }
+    case 0xE: type = DSHOT_TELEMETRY_STATUS; value = m; break;
     default:
       motor->stats.rx_bad_type++;
       return;

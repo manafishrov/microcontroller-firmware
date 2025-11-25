@@ -107,7 +107,7 @@ void telemetry_callback(void *context, int channel,
     send_telemetry(global_motor_id, TELEMETRY_TYPE_CURRENT, value);
   } else if (type == DSHOT_TELEMETRY_STRESS) {
     send_telemetry(global_motor_id, TELEMETRY_TYPE_STRESS, value);
-  } else if (type == DSHOT_TELEMETRY_EDT_VERSION) {
+  } else if (type == DSHOT_TELEMETRY_STATUS) {
     if (!edt_enabled[global_motor_id]) {
       edt_enabled[global_motor_id] = true;
     }
