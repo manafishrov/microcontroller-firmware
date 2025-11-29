@@ -1,5 +1,5 @@
 BUILD_DIR = build
-CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release
+CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 .PHONY: build flash-dshot flash-pwm clean format lint help
 
@@ -18,10 +18,10 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 format:
-	find . -name "*.c" -o -name "*.h" | xargs clang-format -i
+	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format -i
 
 lint:
-	find . -name "*.c" | xargs clang-tidy
+	find . -name "*.c" | grep -v build | xargs clang-tidy -fix-errors -p $(BUILD_DIR)/compile_commands.json
 
 help:
 	@echo "Available targets:"
