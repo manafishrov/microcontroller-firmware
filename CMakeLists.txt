@@ -4,5 +4,5 @@ include(pico_sdk_import.cmake)
 
 project(microcontroller_firmware)
 
-add_subdirectory("src/dshot")
-add_subdirectory("src/pwm")
+add_subdirectory("src/dshot" "dshot")
+add_subdirectory("src/pwm" "pwm")

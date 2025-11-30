@@ -13,10 +13,10 @@ build:
 	cmake --build $(BUILD_DIR)
 
 flash-dshot: build
-	picotool load $(BUILD_DIR)/src/dshot/dshot.uf2 -f
+	picotool load $(BUILD_DIR)/dshot/dshot.uf2 -f
 
 flash-pwm: build
-	picotool load $(BUILD_DIR)/src/pwm/pwm.uf2 -f
+	picotool load $(BUILD_DIR)/pwm/pwm.uf2 -f
 
 clean:
 	rm -rf $(BUILD_DIR)
