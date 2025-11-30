@@ -25,4 +25,4 @@ jobs:
         cd build
         cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPICO_SDK_FETCH_FROM_GIT=ON
         cd ..
-        make lint
+        make lint-check
