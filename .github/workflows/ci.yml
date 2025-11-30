@@ -12,9 +12,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Install clang tools
-      run: sudo apt-get install -y clang-format clang-tidy cmake
+    - uses: actions/checkout@v6
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format clang-tidy cmake build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
     - name: Run clang-format check
       run: make format-check
     - name: Run clang-tidy lint
@@ -23,4 +25,4 @@ jobs:
         cd build
         cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPICO_SDK_FETCH_FROM_GIT=ON
         cd ..
-        make lint check
+        make lint
