@@ -66,3 +66,8 @@ The firmware outputs debug messages via USB CDC. Use a serial monitor:
    ```
 
 3. Exit with **Ctrl+A**, then **K** and confirm.
+
+## License
+
+This project is licensed under the GNU Affero General Public License
+v3.0 or later - see the [LICENSE](LICENSE) file for details.
