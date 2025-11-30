@@ -27,7 +27,7 @@ lint:
 	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors -p $(BUILD_DIR)/compile_commands.json
 
 lint-check:
-	find . -name "*.c" | grep -v build | xargs clang-tidy -p $(BUILD_DIR)/compile_commands.json
+	find . -name "*.c" | grep -v build | xargs clang-tidy -header-filter=.* -p $(BUILD_DIR)/compile_commands.json
 
 help:
 	@echo "Available targets:"

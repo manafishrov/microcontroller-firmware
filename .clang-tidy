@@ -7,7 +7,8 @@ Checks: >
   -readability-identifier-length,
   -readability-non-const-parameter,
   -readability-uppercase-literal-suffix,
-  -misc-non-private-member-variables-in-classes
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner
 WarningsAsErrors: 'true'
-HeaderFilterRegex: 'src/.*'
+HeaderFilterRegex: '.*'
 FormatStyle: file
