@@ -20,8 +20,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON
+
       - name: Build Firmware
-        run: make build
+        run: |
+          cd build
+          cmake --build .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
