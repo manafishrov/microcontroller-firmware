@@ -1,9 +1,9 @@
 #include "pwm.h"
-#include <stdbool.h>
 #include <pico/error.h>
 #include <pico/stdio.h>
 #include <pico/time.h>
 #include <pico/types.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +13,7 @@
 #define PWM_NEUTRAL 1500
 #define PWM_MAX 2000
 #define INPUT_START_BYTE 0x5A
-#define INPUT_PACKET_SIZE (1 + NUM_MOTORS * 2 + 1)
+#define INPUT_PACKET_SIZE (1 + (NUM_MOTORS * 2) + 1)
 
 static uint16_t thruster_values[NUM_MOTORS] = {PWM_NEUTRAL};
 static absolute_time_t last_comm_time;
@@ -24,6 +24,37 @@ uint8_t calculate_checksum(const uint8_t *data, size_t len) {
         checksum ^= data[i];
     }
     return checksum;
+}
+
+bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
+                        absolute_time_t *last_comm_time) {
+    if (usb_buf[0] == INPUT_START_BYTE) {
+        uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
+        uint8_t calculated_checksum = calculate_checksum(usb_buf, INPUT_PACKET_SIZE - 1);
+        if (received_checksum == calculated_checksum) {
+            for (int i = 0; i < NUM_MOTORS; ++i) {
+                uint16_t cmd = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
+                if (cmd > 2000) {
+                    cmd = 2000;
+                }
+                uint16_t us = PWM_MIN + ((cmd * (PWM_MAX - PWM_MIN)) / 2000);
+                thruster_values[i] = us;
+            }
+            *last_comm_time = get_absolute_time();
+            return true;
+        }
+    }
+    return false;
+}
+
+void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values,
+                   size_t *usb_idx) {
+    if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > 200 * 1000) {
+        for (int i = 0; i < NUM_MOTORS; ++i) {
+            thruster_values[i] = PWM_NEUTRAL;
+        }
+        *usb_idx = 0;
+    }
 }
 
 int main() {
@@ -52,31 +83,10 @@ int main() {
             c = getchar_timeout_us(0);
         }
         if (usb_idx >= sizeof(usb_buf)) {
-            if (usb_buf[0] == INPUT_START_BYTE) {
-                uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
-                uint8_t calculated_checksum = calculate_checksum(usb_buf, INPUT_PACKET_SIZE - 1);
-                if (received_checksum == calculated_checksum) {
-                    for (int i = 0; i < NUM_MOTORS; ++i) {
-                        uint16_t cmd = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
-
-                        if (cmd > 2000) {
-                            cmd = 2000;
-                        }
-                        uint16_t us = PWM_MIN + ((cmd * (PWM_MAX - PWM_MIN)) / 2000);
-
-                        thruster_values[i] = us;
-                    }
-                    last_comm_time = get_absolute_time();
-                }
-            }
+            process_usb_packet(usb_buf, thruster_values, &last_comm_time);
             usb_idx = 0;
         }
-        if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > 200 * 1000) {
-            for (int i = 0; i < NUM_MOTORS; ++i) {
-                thruster_values[i] = PWM_NEUTRAL;
-            }
-            usb_idx = 0;
-        }
+        check_timeout(last_comm_time, thruster_values, &usb_idx);
         for (int i = 0; i < NUM_MOTORS; ++i) {
             pwm_set_throttle(&controller, i, thruster_values[i]);
         }

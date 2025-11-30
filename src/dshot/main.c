@@ -42,7 +42,7 @@
 #define TELEMETRY_TYPE_EDT_STATUS 5
 
 #define INPUT_START_BYTE 0x5A
-#define INPUT_PACKET_SIZE (1 + NUM_MOTORS * 2 + 1)
+#define INPUT_PACKET_SIZE (1 + (NUM_MOTORS * 2) + 1)
 
 static uint16_t thruster_values[NUM_MOTORS] = {0};
 static absolute_time_t last_comm_time;
@@ -88,7 +88,7 @@ void send_telemetry(uint8_t motor_id, uint8_t type, int32_t value) {
     fflush(stdout);
 }
 
-void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type, int value) {
+void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type, int value) { // NOLINT(misc-unused-parameters)
     telemetry_context_t *ctx = (telemetry_context_t *)context;
     uint8_t global_motor_id = ctx->controller_base_global_id + channel;
 
@@ -108,6 +108,71 @@ void telemetry_callback(void *context, int channel, enum dshot_telemetry_type ty
         if (!edt_enabled[global_motor_id]) {
             edt_enabled[global_motor_id] = true;
         }
+    }
+}
+
+bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
+                        absolute_time_t *last_comm_time) {
+    if (usb_buf[0] == INPUT_START_BYTE) {
+        uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
+        uint8_t calculated_checksum = calculate_checksum(&usb_buf[0], INPUT_PACKET_SIZE - 1);
+        if (received_checksum == calculated_checksum) {
+            for (int i = 0; i < NUM_MOTORS; ++i) {
+                thruster_values[i] = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
+            }
+            *last_comm_time = get_absolute_time();
+            return true;
+        }
+    }
+    return false;
+}
+
+void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values,
+                   size_t *usb_idx) {
+    if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > COMM_TIMEOUT_MS * 1000) {
+        for (int i = 0; i < NUM_MOTORS; ++i) {
+            thruster_values[i] = CMD_THROTTLE_NEUTRAL;
+        }
+        *usb_idx = 0;
+    }
+}
+
+void update_edt_status(absolute_time_t *last_telemetry_time, bool *edt_enabled) {
+    for (int i = 0; i < NUM_MOTORS; ++i) {
+        if (absolute_time_diff_us(last_telemetry_time[i], get_absolute_time()) > 1000000) {
+            edt_enabled[i] = false;
+        }
+    }
+}
+
+void enable_edt_if_idle(const uint16_t *thruster_values, const bool *edt_enabled,
+                        struct dshot_controller *controller0,
+                        struct dshot_controller *controller1) {
+    bool all_idle = true;
+    for (int i = 0; i < NUM_MOTORS; ++i) {
+        if (thruster_values[i] != CMD_THROTTLE_NEUTRAL) {
+            all_idle = false;
+            break;
+        }
+    }
+    if (all_idle) {
+        for (int i = 0; i < NUM_MOTORS; ++i) {
+            if (!edt_enabled[i]) {
+                struct dshot_controller *ctrl = (i < NUM_MOTORS_0) ? controller0 : controller1;
+                int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
+                dshot_command(ctrl, channel, DSHOT_EXTENDED_TELEMETRY_ENABLE, 6);
+            }
+        }
+    }
+}
+
+void send_dshot_commands(uint16_t *thruster_values, struct dshot_controller *controller0,
+                         struct dshot_controller *controller1) {
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        struct dshot_controller *ctrl = (i < NUM_MOTORS_0) ? controller0 : controller1;
+        int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
+        uint16_t dshot_command_val = translate_throttle_to_dshot(thruster_values[i]);
+        dshot_throttle(ctrl, channel, dshot_command_val);
     }
 }
 
@@ -153,59 +218,14 @@ int main() {
         }
 
         if (usb_idx >= sizeof(usb_buf)) {
-            if (usb_buf[0] == INPUT_START_BYTE) {
-                uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
-                uint8_t calculated_checksum =
-                    calculate_checksum(&usb_buf[0], INPUT_PACKET_SIZE - 1);
-
-                if (received_checksum == calculated_checksum) {
-                    for (int i = 0; i < NUM_MOTORS; ++i) {
-                        thruster_values[i] =
-                            ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
-                    }
-                    last_comm_time = get_absolute_time();
-                }
-            }
+            process_usb_packet(usb_buf, thruster_values, &last_comm_time);
             usb_idx = 0;
         }
 
-        if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > COMM_TIMEOUT_MS * 1000) {
-            for (int i = 0; i < NUM_MOTORS; ++i) {
-                thruster_values[i] = CMD_THROTTLE_NEUTRAL;
-            }
-            usb_idx = 0;
-        }
-
-        for (int i = 0; i < NUM_MOTORS; ++i) {
-            if (absolute_time_diff_us(last_telemetry_time[i], get_absolute_time()) > 1000000) {
-                edt_enabled[i] = false;
-            }
-        }
-
-        bool all_idle = true;
-        for (int i = 0; i < NUM_MOTORS; ++i) {
-            if (thruster_values[i] != CMD_THROTTLE_NEUTRAL) {
-                all_idle = false;
-                break;
-            }
-        }
-        if (all_idle) {
-            for (int i = 0; i < NUM_MOTORS; ++i) {
-                if (!edt_enabled[i]) {
-                    struct dshot_controller *ctrl =
-                        (i < NUM_MOTORS_0) ? &controller0 : &controller1;
-                    int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
-                    dshot_command(ctrl, channel, DSHOT_EXTENDED_TELEMETRY_ENABLE, 6);
-                }
-            }
-        }
-
-        for (int i = 0; i < NUM_MOTORS; i++) {
-            struct dshot_controller *ctrl = (i < NUM_MOTORS_0) ? &controller0 : &controller1;
-            int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
-            uint16_t dshot_command_val = translate_throttle_to_dshot(thruster_values[i]);
-            dshot_throttle(ctrl, channel, dshot_command_val);
-        }
+        check_timeout(last_comm_time, thruster_values, &usb_idx);
+        update_edt_status(last_telemetry_time, edt_enabled);
+        enable_edt_if_idle(thruster_values, edt_enabled, &controller0, &controller1);
+        send_dshot_commands(thruster_values, &controller0, &controller1);
 
         dshot_loop(&controller0);
         dshot_loop(&controller1);

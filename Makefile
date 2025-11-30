@@ -24,7 +24,7 @@ format-check:
 	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format --dry-run --Werror
 
 lint:
-	find . -name "*.c" | grep -v build | xargs clang-tidy --fix -p $(BUILD_DIR)/compile_commands.json
+	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors -p $(BUILD_DIR)/compile_commands.json
 
 lint-check:
 	find . -name "*.c" | grep -v build | xargs clang-tidy -p $(BUILD_DIR)/compile_commands.json

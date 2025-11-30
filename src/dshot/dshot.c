@@ -6,13 +6,11 @@
 
 #include "dshot.h"
 #include "dshot.pio.h"
-#include <stdbool.h>
-#include <hardware/clocks.h>
-#include <hardware/gpio.h>
 #include <hardware/pio.h>
 #include <hardware/structs/clocks.h>
 #include <pico/time.h>
 #include <pico/types.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
