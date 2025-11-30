@@ -1,7 +1,15 @@
 BUILD_DIR = build
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ARM_GCC_INCLUDE = $(shell arm-none-eabi-gcc -print-file-name=include)
-ARM_SYSROOT_INCLUDE = $(shell arm-none-eabi-gcc -print-sysroot)/include
+RAW_SYSROOT = $(shell arm-none-eabi-gcc -print-sysroot)
+
+ifeq ($(strip $(RAW_SYSROOT)),)
+    SYSROOT_BASE = /usr/arm-none-eabi
+else
+    SYSROOT_BASE = $(RAW_SYSROOT)
+endif
+
+ARM_SYSROOT_INCLUDE = $(shell if [ -d "$(SYSROOT_BASE)/include" ]; then echo "$(SYSROOT_BASE)/include"; else echo "$(SYSROOT_BASE)/usr/include"; fi)
 
 .PHONY: build flash-dshot flash-pwm clean format format-check lint lint-check help
 
@@ -28,14 +36,14 @@ format-check:
 lint:
 	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors \
 	-p $(BUILD_DIR)/compile_commands.json \
-	-header-filter="^$(PWD)/src/.*" \
+	-header-filter="^$(CURDIR)/src/.*" \
 	--extra-arg=-I$(ARM_GCC_INCLUDE) \
 	--extra-arg=-I$(ARM_SYSROOT_INCLUDE)
 
 lint-check:
 	find . -name "*.c" | grep -v build | xargs clang-tidy \
 	-p $(BUILD_DIR)/compile_commands.json \
-	-header-filter="^$(PWD)/src/.*" \
+	-header-filter="^$(CURDIR)/src/.*" \
 	--extra-arg=-I$(ARM_GCC_INCLUDE) \
 	--extra-arg=-I$(ARM_SYSROOT_INCLUDE)
 
