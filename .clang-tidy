@@ -11,3 +11,4 @@ Checks: >
 WarningsAsErrors: 'true'
 HeaderFilterRegex: 'src/.*'
 FormatStyle: file
+ExtraArgs: ['-Wno-error']

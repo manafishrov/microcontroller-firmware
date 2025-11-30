@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
+    - name: Clone Pico SDK
+      run: git clone --recursive https://github.com/raspberrypi/pico-sdk /tmp/pico_sdk
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -23,6 +25,6 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPICO_SDK_FETCH_FROM_GIT=ON
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPICO_SDK_PATH=/tmp/pico_sdk
         cd ..
         make lint-check
