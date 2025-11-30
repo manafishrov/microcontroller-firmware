@@ -4,9 +4,8 @@
 #include <pico/time.h>
 #include <pico/types.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <string.h>
 
 #define NUM_MOTORS 8
 #define PWM_MIN 1000
