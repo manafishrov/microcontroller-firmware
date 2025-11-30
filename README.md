@@ -1,88 +1,68 @@
 # Microcontroller Firmware
 
-The microcontroller in the Manafish ROV is responsible for sending signals to the thrusters. All required dependencies for working with it are included in the main firmware on the Pi, so you can use the Manafish Pi for developing it.
+Firmware for the Raspberry Pi Pico used in the Manafish ROV to control thrusters.
+It supports two control protocols:
+
+- DShot (digital ESC control)
+- PWM (analog ESC control)
+
+All development dependencies are included in the firmware environment on the
+Manafish Pi, so you can develop directly on the device.
 
 ## Prerequisites
 
-- `pico-sdk`
-- `clang-format` and `clang-tidy` for code formatting/linting
-- `picotool` for flashing
-- `arm-none-eabi-gcc`, CMake, Make
+- Raspberry Pi Pico SDK (automatically fetched by CMake)
+- clang-format and clang-tidy
+- picotool for flashing
+- arm-none-eabi-gcc toolchain
+- CMake and Make
 
-## Available Commands
+## Building and Flashing
 
-Run `make help` for a full list. Key targets:
+The project uses CMake to configure the build. The Pico SDK is downloaded
+automatically on first build.
 
-- `make build` - Build both DShot and PWM firmware
-- `make flash-dshot` / `make flash-pwm` - Build and flash specific firmware
-- `make clean` - Clean build directory
-- `make format` - Format code
-- `make lint` - Lint and fix code
+### Common Commands
 
-## Build
+Run `make help` to list all available targets.
 
-To build the Pico firmware, ensure the `pico-sdk` is available. The Makefile handles CMake configuration and building.
+Key targets include:
 
-Navigate to the src directory:
+- `make build` – Build DShot and PWM firmware
+- `make flash-dshot` – Build and flash DShot firmware
+- `make flash-pwm` – Build and flash PWM firmware
+- `make clean` – Remove build directory
+- `make format` – Format source code
+- `make format-check` – Verify formatting (useful for CI)
+- `make lint` – Lint and auto-fix C code
 
-```sh
-cd src
-```
+### Build Output
 
-To build DShot firmware:
+Compiled `.uf2` files appear in:
 
-```sh
-make flash-dshot
-```
+- build/src/dshot/dshot.uf2
+- build/src/pwm/pwm.uf2
 
-To build PWM firmware:
+### Flashing
 
-```sh
-make flash-pwm
-```
+Use `make flash-dshot` or `make flash-pwm`. Flashing works regardless of whether
+the Pico is in BOOTSEL mode—the device reboots automatically as needed.
 
-To build both:
+## Debugging
 
-```sh
-make build
-```
+The firmware outputs debug messages via USB CDC. Use a serial monitor:
 
-The `.uf2` files will be in `build/src/dshot/dshot.uf2` and `build/src/pwm/pwm.uf2`. For rebuilds, the Makefile reconfigures only when needed.
+1. Find the Pico's serial port:
 
-## Flash
+   ```sh
+   ls /dev/ttyACM*  # Linux
+   ls /dev/tty.usbmodem*  # macOS
+   ```
 
-Ensure `picotool` is installed. The Makefile handles flashing after building.
+2. For example connecting with `screen`:
 
-To flash DShot firmware:
+   ```sh
+   screen /dev/ttyACM0 115200
+   ```
 
-```sh
-make flash-dshot
-```
-
-To flash PWM firmware:
-
-```sh
-make flash-pwm
-```
-
-This works regardless of BOOTSEL mode.
-
-## View firmware serial output
-
-The firmware uses USB CDC to send log messages (`printf` statements) back to the connected computer, which is invaluable for debugging. To view this output, you need a serial monitor program like `screen`.
-
-First find the Pico's serial address:
-
-```sh
-ls /dev/ttyACM* # use ls /dev/tty.usbmodem* on darwin
-```
-
-Then, use `screen` to connect to the Pico's serial address:
-
-```sh
-screen /dev/ttyACM0 115200
-```
-
-The last argument is the baud rate, which you should leave at `115200` unless you have changed it in the firmware.
-
-To exit `screen` press **Ctrl+A**, then press **K**. It will ask for confirmation; press **Y**.
+3. Exit with **Ctrl+A**, then **K** and confirm.
