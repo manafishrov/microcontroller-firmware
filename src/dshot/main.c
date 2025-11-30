@@ -90,6 +90,7 @@ void send_telemetry(uint8_t motor_id, uint8_t type, int32_t value) {
 
 void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type,
                         int value) { // NOLINT(misc-unused-parameters)
+    (void)channel;
     telemetry_context_t *ctx = (telemetry_context_t *)context;
     uint8_t global_motor_id = ctx->controller_base_global_id + channel;
 

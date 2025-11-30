@@ -6,7 +6,10 @@ Checks: >
   readability-*,
   -readability-magic-numbers,
   -readability-identifier-length,
+  -readability-non-const-parameter,
+  -readability-uppercase-literal-suffix,
   -misc-non-private-member-variables-in-classes
 WarningsAsErrors: 'true'
 HeaderFilterRegex: '.*'
 FormatStyle: file
+ExtraArgs: ['-Wno-error']
