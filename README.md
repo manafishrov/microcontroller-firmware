@@ -14,32 +14,31 @@ The microcontroller in the Manafish ROV is responsible for sending signals to th
 Run `make help` for a full list. Key targets:
 
 - `make build` - Build both DShot and PWM firmware
-- `make build-dshot` / `make build-pwm` - Build specific firmware
-- `make flash-dshot` / `make flash-pwm` - Build and flash
+- `make flash-dshot` / `make flash-pwm` - Build and flash specific firmware
 - `make clean` - Clean build directory
 - `make format` - Format code
-- `make lint` - Lint code
+- `make lint` - Lint and fix code
 
 ## Build
 
 To build the Pico firmware, ensure the `pico-sdk` is available. The Makefile handles CMake configuration and building.
 
-Navigate to the src-pico directory:
+Navigate to the src directory:
 
 ```sh
-cd src-pico
+cd src
 ```
 
 To build DShot firmware:
 
 ```sh
-make build-dshot
+make flash-dshot
 ```
 
 To build PWM firmware:
 
 ```sh
-make build-pwm
+make flash-pwm
 ```
 
 To build both:
@@ -48,7 +47,7 @@ To build both:
 make build
 ```
 
-The `.uf2` files will be in `build/dshot/microcontroller_firmware.uf2` and `build/pwm/microcontroller_firmware.uf2`. For rebuilds, the Makefile reconfigures only when needed.
+The `.uf2` files will be in `build/src/dshot/dshot.uf2` and `build/src/pwm/pwm.uf2`. For rebuilds, the Makefile reconfigures only when needed.
 
 ## Flash
 
