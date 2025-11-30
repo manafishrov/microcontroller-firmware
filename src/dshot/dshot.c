@@ -6,9 +6,11 @@
 
 #include "dshot.h"
 #include "dshot.pio.h"
+#include <stdbool.h>
+#include <hardware/clocks.h>
+#include <hardware/gpio.h>
 #include <hardware/pio.h>
 #include <hardware/structs/clocks.h>
-#include <hardware/sync/spin_lock.h>
 #include <pico/time.h>
 #include <pico/types.h>
 #include <stdint.h>
@@ -108,7 +110,8 @@ static uint32_t dshot_gcr_lookup(int gcr, int *error) {
 static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller, uint16_t edt) {
     struct dshot_motor *motor = &controller->motor[controller->channel];
     enum dshot_telemetry_type type;
-    uint16_t e, m;
+    uint16_t e;
+    uint16_t m;
     int value;
 
     uint8_t top = (edt & 0xF000) >> 12;
@@ -178,7 +181,8 @@ static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
     int sum;
     int error = 0;
     uint16_t crc;
-    uint32_t gcr, edt;
+    uint32_t gcr;
+    uint32_t edt;
     struct dshot_motor *motor = &controller->motor[controller->channel];
 
     if (value == 0) {
@@ -268,7 +272,8 @@ void dshot_loop(struct dshot_controller *controller) {
 }
 
 static uint16_t dshot_compute_frame(uint16_t throttle, int telemetry) {
-    uint16_t crc, value;
+    uint16_t crc;
+    uint16_t value;
 
     value = (throttle << 1) | telemetry;
 

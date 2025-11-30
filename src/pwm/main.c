@@ -1,8 +1,10 @@
 #include "pwm.h"
+#include <stdbool.h>
 #include <pico/error.h>
 #include <pico/stdio.h>
 #include <pico/time.h>
 #include <pico/types.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -55,12 +57,12 @@ int main() {
                 uint8_t calculated_checksum = calculate_checksum(usb_buf, INPUT_PACKET_SIZE - 1);
                 if (received_checksum == calculated_checksum) {
                     for (int i = 0; i < NUM_MOTORS; ++i) {
-                        uint16_t cmd = ((uint16_t)usb_buf[2 * i + 2] << 8) | usb_buf[2 * i + 1];
+                        uint16_t cmd = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
 
                         if (cmd > 2000) {
                             cmd = 2000;
                         }
-                        uint16_t us = PWM_MIN + (cmd * (PWM_MAX - PWM_MIN)) / 2000;
+                        uint16_t us = PWM_MIN + ((cmd * (PWM_MAX - PWM_MIN)) / 2000);
 
                         thruster_values[i] = us;
                     }

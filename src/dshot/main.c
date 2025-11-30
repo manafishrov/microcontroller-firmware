@@ -5,6 +5,7 @@
 #include <pico/time.h>
 #include <pico/types.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -160,7 +161,7 @@ int main() {
                 if (received_checksum == calculated_checksum) {
                     for (int i = 0; i < NUM_MOTORS; ++i) {
                         thruster_values[i] =
-                            ((uint16_t)usb_buf[2 * i + 2] << 8) | usb_buf[2 * i + 1];
+                            ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
                     }
                     last_comm_time = get_absolute_time();
                 }
