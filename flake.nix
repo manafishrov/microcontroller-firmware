@@ -29,6 +29,7 @@
               pico-sdk-with-submodules
               clang
               clang-tools
+              picocom
             ];
 
             PICO_SDK_PATH = "${pico-sdk-with-submodules}/lib/pico-sdk";

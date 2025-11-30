@@ -16,13 +16,22 @@ Manafish Pi, so you can develop directly on the device.
 - picotool for flashing
 - arm-none-eabi-gcc toolchain
 - CMake and Make
+- picocom for debugging
+
+If you have **[Nix](https://nixos.org/)** and **[direnv](https://direnv.net/)** installed:
+
+1. Enter the directory: `cd microcontroller-firmware`
+2. Run `direnv allow`
+
+This will automatically download and configure the Pico SDK, ARM toolchain,
+Clang tools, and CMake.
 
 ## Building and Flashing
 
 The project uses CMake to configure the build. The Pico SDK is downloaded
 automatically on first build.
 
-### Common Commands
+### Commands
 
 Run `make help` to list all available targets.
 
@@ -35,6 +44,7 @@ Key targets include:
 - `make format` – Format source code
 - `make format-check` – Verify formatting (useful for CI)
 - `make lint` – Lint and auto-fix C code
+- `make lint-check` – Check C code lint
 
 ### Build Output
 
@@ -50,19 +60,24 @@ the Pico is in BOOTSEL mode—the device reboots automatically as needed.
 
 ## Debugging
 
-The firmware outputs debug messages via USB CDC. Use a serial monitor:
+The firmware outputs debug messages via USB CDC. Use a serial monitor
+like `picocom` to debug:
 
 1. Find the Pico's serial port:
 
    ```sh
    ls /dev/ttyACM*  # Linux
-   ls /dev/tty.usbmodem*  # macOS
+   ls /dev/tty.usbmodem*  # Darwin
    ```
 
-2. For example connecting with `screen`:
+2. Connect to the device:
 
    ```sh
-   screen /dev/ttyACM0 115200
+   # Linux
+   picocom -b 115200 /dev/ttyACM0
+
+   # Darwin
+   picocom -b 115200 /dev/tty.usbmodem*
    ```
 
 3. Exit with **Ctrl+A**, then **K** and confirm.
