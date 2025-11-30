@@ -9,6 +9,5 @@ Checks: >
   -readability-uppercase-literal-suffix,
   -misc-non-private-member-variables-in-classes
 WarningsAsErrors: 'true'
-HeaderFilterRegex: '.*'
+HeaderFilterRegex: 'src/.*'
 FormatStyle: file
-ExtraArgs: ['-Wno-error']
