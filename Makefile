@@ -1,5 +1,7 @@
 BUILD_DIR = build
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+ARM_GCC_INCLUDE = $(shell arm-none-eabi-gcc -print-file-name=include)
+ARM_SYSROOT_INCLUDE = $(shell arm-none-eabi-gcc -print-sysroot)/include
 
 .PHONY: build flash-dshot flash-pwm clean format format-check lint lint-check help
 
@@ -24,10 +26,18 @@ format-check:
 	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format --dry-run --Werror
 
 lint:
-	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors -p $(BUILD_DIR)/compile_commands.json
+	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors \
+	-p $(BUILD_DIR)/compile_commands.json \
+	-header-filter="^$(PWD)/src/.*" \
+	--extra-arg=-I$(ARM_GCC_INCLUDE) \
+	--extra-arg=-I$(ARM_SYSROOT_INCLUDE)
 
 lint-check:
-	find . -name "*.c" | grep -v build | xargs clang-tidy -header-filter=.* -p $(BUILD_DIR)/compile_commands.json
+	find . -name "*.c" | grep -v build | xargs clang-tidy \
+	-p $(BUILD_DIR)/compile_commands.json \
+	-header-filter="^$(PWD)/src/.*" \
+	--extra-arg=-I$(ARM_GCC_INCLUDE) \
+	--extra-arg=-I$(ARM_SYSROOT_INCLUDE)
 
 help:
 	@echo "Available targets:"
@@ -37,6 +47,6 @@ help:
 	@echo "  clean         - Clean build dir"
 	@echo "  format        - Format C code"
 	@echo "  format-check  - Check C code formatting"
-	@echo "  lint          - Lint C code"
-	@echo "  lint-check    - Check C code linting"
+	@echo "  lint          - Lint C code (auto-fix errors)"
+	@echo "  lint-check    - Check C code linting (report only)"
 	@echo "  help          - Show this help"

@@ -7,8 +7,6 @@ Checks: >
   -readability-identifier-length,
   -readability-non-const-parameter,
   -readability-uppercase-literal-suffix,
-  -misc-non-private-member-variables-in-classes,
-  -misc-include-cleaner
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
 WarningsAsErrors: 'true'
-HeaderFilterRegex: '.*'
 FormatStyle: file
