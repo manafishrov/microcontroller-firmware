@@ -38,5 +38,5 @@ help:
 	@echo "  format        - Format C code"
 	@echo "  format-check  - Check C code formatting"
 	@echo "  lint          - Lint C code"
-	@echo "  lint          - Check C code linting"
+	@echo "  lint-check    - Check C code linting"
 	@echo "  help          - Show this help"
