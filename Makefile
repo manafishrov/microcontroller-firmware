@@ -28,6 +28,7 @@ format-check:
 	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format --dry-run --Werror
 
 lint:
+	cmake --build $(BUILD_DIR)
 	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors \
 	-p $(BUILD_DIR)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
@@ -37,6 +38,7 @@ lint:
 	--extra-arg=-I$(SYSROOT_C)
 
 lint-check:
+	cmake --build $(BUILD_DIR)
 	find . -name "*.c" | grep -v build | xargs clang-tidy \
 	-p $(BUILD_DIR)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
