@@ -47,8 +47,7 @@ bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
     return false;
 }
 
-void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values,
-                   size_t *usb_idx) {
+void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values, size_t *usb_idx) {
     if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > 200 * 1000) {
         for (int i = 0; i < NUM_MOTORS; ++i) {
             thruster_values[i] = PWM_NEUTRAL;

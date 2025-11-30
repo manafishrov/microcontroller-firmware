@@ -88,7 +88,8 @@ void send_telemetry(uint8_t motor_id, uint8_t type, int32_t value) {
     fflush(stdout);
 }
 
-void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type, int value) { // NOLINT(misc-unused-parameters)
+void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type,
+                        int value) { // NOLINT(misc-unused-parameters)
     telemetry_context_t *ctx = (telemetry_context_t *)context;
     uint8_t global_motor_id = ctx->controller_base_global_id + channel;
 
@@ -127,8 +128,7 @@ bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
     return false;
 }
 
-void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values,
-                   size_t *usb_idx) {
+void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values, size_t *usb_idx) {
     if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > COMM_TIMEOUT_MS * 1000) {
         for (int i = 0; i < NUM_MOTORS; ++i) {
             thruster_values[i] = CMD_THROTTLE_NEUTRAL;
