@@ -23,6 +23,7 @@
         {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
+              pkg-config
               cmake
               gcc-arm-embedded
               picotool
@@ -31,7 +32,6 @@
               clang-tools
               picocom
             ];
-
             PICO_SDK_PATH = "${pico-sdk-with-submodules}/lib/pico-sdk";
           };
         });
