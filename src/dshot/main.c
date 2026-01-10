@@ -18,7 +18,7 @@
 #define DSHOT_PIO pio0
 #define DSHOT_SM_0 0
 #define DSHOT_SM_1 1
-#define DSHOT_SPEED 300
+#define DSHOT_SPEED 600
 
 #define COMM_TIMEOUT_MS 200
 
