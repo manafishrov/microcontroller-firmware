@@ -20,13 +20,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
-      - name: Configure CMake
+      - name: Configure CMake for Pico
         run: |
           mkdir -p build
           cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON
 
-      - name: Build Firmware
+      - name: Build Firmware for Pico
+        run: |
+          cd build
+          cmake --build .
+
+       - name: Configure CMake for Pico 2
+         run: |
+           cd build
+           cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON -DPICO_PLATFORM=rp2350-arm-s -DPICO_BOARD=pico2
+
+      - name: Build Firmware for Pico 2
         run: |
           cd build
           cmake --build .
@@ -42,5 +52,7 @@ jobs:
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            build/dshot/dshot.uf2
-            build/pwm/pwm.uf2
+            build/dshot-pico.uf2
+            build/pwm-pico.uf2
+            build/dshot-pico2.uf2
+            build/pwm-pico2.uf2
