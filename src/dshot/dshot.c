@@ -114,58 +114,57 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller, 
     int value;
 
     uint8_t top = (edt & 0xF000) >> 12;
-    bool is_edt = (top != 0 && (top & 0x1) == 0);
 
-    if (is_edt) {
-        m = (edt >> 4) & 0xFF;
-        switch (top) {
-        case EDT_PREFIX_TEMPERATURE:
-            type = DSHOT_TELEMETRY_TEMPERATURE;
-            value = m;
-            break;
-        case EDT_PREFIX_VOLTAGE:
-            type = DSHOT_TELEMETRY_VOLTAGE;
-            value = m / 4;
-            break;
-        case EDT_PREFIX_CURRENT:
-            type = DSHOT_TELEMETRY_CURRENT;
-            value = m;
-            break;
-        case EDT_PREFIX_DEBUG1:
-            type = DSHOT_TELEMETRY_DEBUG1;
-            value = m;
-            break;
-        case EDT_PREFIX_DEBUG2:
-            type = DSHOT_TELEMETRY_DEBUG2;
-            value = m;
-            break;
-        case EDT_PREFIX_STRESS:
-            type = DSHOT_TELEMETRY_STRESS;
-            value = m;
-            break;
-        case EDT_PREFIX_STATUS:
-            type = DSHOT_TELEMETRY_STATUS;
-            value = m;
-            break;
-        default:
-            motor->stats.rx_bad_type++;
-            return;
-        }
-
-    } else {
+    switch (top) {
+    case EDT_PREFIX_TEMPERATURE:
+        type = DSHOT_TELEMETRY_TEMPERATURE;
+        value = (edt >> 4) & 0xFF;
+        break;
+    case EDT_PREFIX_VOLTAGE:
+        type = DSHOT_TELEMETRY_VOLTAGE;
+        value = ((edt >> 4) & 0xFF) * 25;
+        break;
+    case EDT_PREFIX_CURRENT:
+        type = DSHOT_TELEMETRY_CURRENT;
+        value = (edt >> 4) & 0xFF;
+        break;
+    case EDT_PREFIX_DEBUG1:
+        type = DSHOT_TELEMETRY_DEBUG1;
+        value = (edt >> 4) & 0xFF;
+        break;
+    case EDT_PREFIX_DEBUG2:
+        type = DSHOT_TELEMETRY_DEBUG2;
+        value = (edt >> 4) & 0xFF;
+        break;
+    case EDT_PREFIX_STRESS:
+        type = DSHOT_TELEMETRY_STRESS;
+        value = (edt >> 4) & 0xFF;
+        break;
+    case EDT_PREFIX_STATUS:
+        type = DSHOT_TELEMETRY_STATUS;
+        value = (edt >> 4) & 0xFF;
+        break;
+    default:
         e = (edt & 0xE000) >> 13;
-        m = (edt & 0x1FFF) >> 4;
+        m = (edt & 0x1FF0) >> 4;
         type = DSHOT_TELEMETRY_ERPM;
-        // Note: While the spec refers to the raw value as "eRPM", standard DSHOT
-        // implementations transmit the commutation period in microseconds.
-        // We convert this period to eRPM: (1,000,000 us/s * 60 s/min) / period
+
         value = m << e;
-        if (value == 0xff80) {
+
+        if (value == 0 || value == 0xff80) {
             value = 0;
-        } else if (value != 0) {
+        } else {
             value = (1000000 * 60) / value;
         }
+        break;
     }
+
+    motor->stats.rx_frames++;
+    if (controller->telemetry_cb) {
+        controller->telemetry_cb(controller->telemetry_cb_context, controller->channel, type,
+                                 value);
+    }
+}
 
     motor->stats.rx_frames++;
     if (controller->telemetry_cb) {
@@ -188,6 +187,8 @@ static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
         motor->stats.rx_timeout++;
         return;
     }
+
+    value = ~value & 0x1FFFFF;
 
     gcr = (value ^ (value >> 1));
 
