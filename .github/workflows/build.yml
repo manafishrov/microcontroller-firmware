@@ -24,7 +24,7 @@ jobs:
         run: |
           mkdir -p build/pico
           cd build/pico
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON
+          cmake -S $GITHUB_WORKSPACE -B . -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON
 
       - name: Build Firmware for Pico
         run: |
@@ -35,7 +35,7 @@ jobs:
         run: |
           mkdir -p build/pico2
           cd build/pico2
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON -DPICO_BOARD=pico2
+          cmake -S $GITHUB_WORKSPACE -B . -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON -DPICO_BOARD=pico2
 
       - name: Build Firmware for Pico 2
         run: |
