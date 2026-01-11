@@ -109,62 +109,53 @@ static uint32_t dshot_gcr_lookup(int gcr, int *error) {
 static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller, uint16_t edt) {
     struct dshot_motor *motor = &controller->motor[controller->channel];
     enum dshot_telemetry_type type;
-    uint16_t e;
-    uint16_t m;
     int value;
 
     uint8_t top = (edt & 0xF000) >> 12;
+    uint8_t m = (edt >> 4) & 0xFF;
 
     switch (top) {
     case EDT_PREFIX_TEMPERATURE:
         type = DSHOT_TELEMETRY_TEMPERATURE;
-        value = (edt >> 4) & 0xFF;
+        value = m;
         break;
     case EDT_PREFIX_VOLTAGE:
         type = DSHOT_TELEMETRY_VOLTAGE;
-        value = ((edt >> 4) & 0xFF) * 25;
+        value = m * 25;
         break;
     case EDT_PREFIX_CURRENT:
         type = DSHOT_TELEMETRY_CURRENT;
-        value = (edt >> 4) & 0xFF;
+        value = m;
         break;
     case EDT_PREFIX_DEBUG1:
         type = DSHOT_TELEMETRY_DEBUG1;
-        value = (edt >> 4) & 0xFF;
+        value = m;
         break;
     case EDT_PREFIX_DEBUG2:
         type = DSHOT_TELEMETRY_DEBUG2;
-        value = (edt >> 4) & 0xFF;
+        value = m;
         break;
     case EDT_PREFIX_STRESS:
         type = DSHOT_TELEMETRY_STRESS;
-        value = (edt >> 4) & 0xFF;
+        value = m;
         break;
     case EDT_PREFIX_STATUS:
         type = DSHOT_TELEMETRY_STATUS;
-        value = (edt >> 4) & 0xFF;
+        value = m;
         break;
-    default:
-        e = (edt & 0xE000) >> 13;
-        m = (edt & 0x1FF0) >> 4;
+    default: {
         type = DSHOT_TELEMETRY_ERPM;
+        uint16_t e = (edt & 0xE000) >> 13;
+        uint16_t period = ((edt & 0x1FF0) >> 4) << e;
 
-        value = m << e;
-
-        if (value == 0 || value == 0xff80) {
+        if (period == 0 || period == 0xff80) {
             value = 0;
         } else {
-            value = (1000000 * 60) / value;
+            value = 60000000 / period;
         }
         break;
     }
-
-    motor->stats.rx_frames++;
-    if (controller->telemetry_cb) {
-        controller->telemetry_cb(controller->telemetry_cb_context, controller->channel, type,
-                                 value);
     }
-}
 
     motor->stats.rx_frames++;
     if (controller->telemetry_cb) {
@@ -174,9 +165,6 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller, 
 }
 
 static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
-    int bit;
-    int i;
-    int sum;
     int error = 0;
     uint16_t crc;
     uint32_t gcr;
