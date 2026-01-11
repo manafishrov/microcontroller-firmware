@@ -38,8 +38,7 @@ format:
 format-check:
 	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format --dry-run --Werror
 
-lint:
-	cmake --build $(BUILD_DIR_PICO)
+lint: build-pico
 	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors \
 	-p $(BUILD_DIR_PICO)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
@@ -48,8 +47,7 @@ lint:
 	--extra-arg=-I$(SYSROOT_B) \
 	--extra-arg=-I$(SYSROOT_C)
 
-lint-check:
-	cmake --build $(BUILD_DIR_PICO)
+lint-check: build-pico
 	find . -name "*.c" | grep -v build | xargs clang-tidy \
 	-p $(BUILD_DIR_PICO)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
