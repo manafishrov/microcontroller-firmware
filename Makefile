@@ -1,6 +1,6 @@
 BUILD_DIR_PICO = build/pico
 BUILD_DIR_PICO2 = build/pico2
-CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPICO_SDK_FETCH_FROM_GIT=ON
 CMAKE_FLAGS_PICO2 = $(CMAKE_FLAGS) -DPICO_BOARD=pico2
 ARM_GCC_INCLUDE = $(shell arm-none-eabi-gcc -print-file-name=include)
 SYSROOT_A = $(shell arm-none-eabi-gcc -print-sysroot)/include
