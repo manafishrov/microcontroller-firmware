@@ -1,6 +1,7 @@
-BUILD_DIR = build
+BUILD_DIR_PICO = build/pico
+BUILD_DIR_PICO2 = build/pico2
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-CMAKE_FLAGS_PICO2 = $(CMAKE_FLAGS) -DPICO_PLATFORM=rp2350-arm-s -DPICO_BOARD=pico2
+CMAKE_FLAGS_PICO2 = $(CMAKE_FLAGS) -DPICO_BOARD=pico2
 ARM_GCC_INCLUDE = $(shell arm-none-eabi-gcc -print-file-name=include)
 SYSROOT_A = $(shell arm-none-eabi-gcc -print-sysroot)/include
 SYSROOT_B = /usr/arm-none-eabi/include
@@ -9,29 +10,27 @@ SYSROOT_C = /usr/lib/arm-none-eabi/include
 .PHONY: build-pico build-pico2 flash-dshot-pico flash-pwm-pico flash-dshot-pico2 flash-pwm-pico2 clean format format-check lint lint-check help
 
 build-pico:
-	mkdir -p $(BUILD_DIR)
-	cd $(BUILD_DIR) && cmake .. $(CMAKE_FLAGS)
-	cmake --build $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR_PICO)
+	cd $(BUILD_DIR_PICO) && cmake -S $(CURDIR) -B . $(CMAKE_FLAGS) && cmake --build .
 
 build-pico2:
-	mkdir -p $(BUILD_DIR)
-	cd $(BUILD_DIR) && cmake .. $(CMAKE_FLAGS_PICO2)
-	cmake --build $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR_PICO2)
+	cd $(BUILD_DIR_PICO2) && cmake -S $(CURDIR) -B . $(CMAKE_FLAGS_PICO2) && cmake --build .
 
 flash-dshot-pico: build-pico
-	picotool load $(BUILD_DIR)/dshot-pico.uf2 -f
+	picotool load $(BUILD_DIR_PICO)/dshot.uf2 -f
 
 flash-pwm-pico: build-pico
-	picotool load $(BUILD_DIR)/pwm-pico.uf2 -f
+	picotool load $(BUILD_DIR_PICO)/pwm.uf2 -f
 
 flash-dshot-pico2: build-pico2
-	picotool load $(BUILD_DIR)/dshot-pico2.uf2 -f
+	picotool load $(BUILD_DIR_PICO2)/dshot.uf2 -f
 
 flash-pwm-pico2: build-pico2
-	picotool load $(BUILD_DIR)/pwm-pico2.uf2 -f
+	picotool load $(BUILD_DIR_PICO2)/pwm.uf2 -f
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf build
 
 format:
 	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format -i
@@ -40,9 +39,9 @@ format-check:
 	find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format --dry-run --Werror
 
 lint:
-	cmake --build $(BUILD_DIR)
+	cmake --build $(BUILD_DIR_PICO)
 	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors \
-	-p $(BUILD_DIR)/compile_commands.json \
+	-p $(BUILD_DIR_PICO)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
 	--extra-arg=-I$(ARM_GCC_INCLUDE) \
 	--extra-arg=-I$(SYSROOT_A) \
@@ -50,9 +49,9 @@ lint:
 	--extra-arg=-I$(SYSROOT_C)
 
 lint-check:
-	cmake --build $(BUILD_DIR)
+	cmake --build $(BUILD_DIR_PICO)
 	find . -name "*.c" | grep -v build | xargs clang-tidy \
-	-p $(BUILD_DIR)/compile_commands.json \
+	-p $(BUILD_DIR_PICO)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
 	--extra-arg=-I$(ARM_GCC_INCLUDE) \
 	--extra-arg=-I$(SYSROOT_A) \

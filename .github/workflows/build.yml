@@ -22,24 +22,32 @@ jobs:
 
       - name: Configure CMake for Pico
         run: |
-          mkdir -p build
-          cd build
+          mkdir -p build/pico
+          cd build/pico
           cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON
 
       - name: Build Firmware for Pico
         run: |
-          cd build
+          cd build/pico
           cmake --build .
 
       - name: Configure CMake for Pico 2
         run: |
-          cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON -DPICO_PLATFORM=rp2350-arm-s -DPICO_BOARD=pico2
+          mkdir -p build/pico2
+          cd build/pico2
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_FETCH_FROM_GIT=ON -DPICO_BOARD=pico2
 
       - name: Build Firmware for Pico 2
         run: |
-          cd build
+          cd build/pico2
           cmake --build .
+
+      - name: Rename Assets for Release
+        run: |
+          cp build/pico/pwm.uf2 pwm-pico.uf2
+          cp build/pico/dshot.uf2 dshot-pico.uf2
+          cp build/pico2/pwm.uf2 pwm-pico2.uf2
+          cp build/pico2/dshot.uf2 dshot-pico2.uf2
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -52,7 +60,7 @@ jobs:
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            build/dshot-pico.uf2
-            build/pwm-pico.uf2
-            build/dshot-pico2.uf2
-            build/pwm-pico2.uf2
+            pwm-pico.uf2
+            dshot-pico.uf2
+            pwm-pico2.uf2
+            dshot-pico2.uf2
