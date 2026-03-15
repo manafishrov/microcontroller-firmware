@@ -106,55 +106,73 @@ static uint32_t dshot_gcr_lookup(int gcr, int *error) {
     return 0xfffffff;
 }
 
-static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller, uint16_t edt) {
+static int dshot_decode_erpm_telemetry_value(uint16_t value) {
+    uint16_t period;
+
+    if (value == 0x0FFF) {
+        return 0;
+    }
+
+    period = (value & 0x01FF) << ((value & 0x0E00) >> 9);
+    if (period == 0) {
+        return -1;
+    }
+
+    return (600000 + (period / 2)) / period;
+}
+
+static void dshot_interpret_telemetry(struct dshot_controller *controller, uint16_t edt) {
     struct dshot_motor *motor = &controller->motor[controller->channel];
     enum dshot_telemetry_type type;
-    int value;
+    int value = -1;
+    uint16_t raw_value = edt >> 4;
+    unsigned telemetry_type = (raw_value & 0x0F00) >> 8;
+    bool is_erpm = !motor->edt_enabled || (telemetry_type & 0x01) || (telemetry_type == 0);
 
-    uint8_t top = (edt & 0xF000) >> 12;
-    uint8_t m = (edt >> 4) & 0xFF;
-
-    switch (top) {
-    case EDT_PREFIX_TEMPERATURE:
-        type = DSHOT_TELEMETRY_TEMPERATURE;
-        value = m;
-        break;
-    case EDT_PREFIX_VOLTAGE:
-        type = DSHOT_TELEMETRY_VOLTAGE;
-        value = m * 25;
-        break;
-    case EDT_PREFIX_CURRENT:
-        type = DSHOT_TELEMETRY_CURRENT;
-        value = m;
-        break;
-    case EDT_PREFIX_DEBUG1:
-        type = DSHOT_TELEMETRY_DEBUG1;
-        value = m;
-        break;
-    case EDT_PREFIX_DEBUG2:
-        type = DSHOT_TELEMETRY_DEBUG2;
-        value = m;
-        break;
-    case EDT_PREFIX_STRESS:
-        type = DSHOT_TELEMETRY_STRESS;
-        value = m;
-        break;
-    case EDT_PREFIX_STATUS:
-        type = DSHOT_TELEMETRY_STATUS;
-        value = m;
-        break;
-    default: {
+    if (is_erpm) {
         type = DSHOT_TELEMETRY_ERPM;
-        uint16_t e = (edt & 0xE000) >> 13;
-        uint16_t period = ((edt & 0x1FF0) >> 4) << e;
+        value = dshot_decode_erpm_telemetry_value(raw_value);
+    } else {
+        uint8_t data = raw_value & 0x00FF;
 
-        if (period == 0 || period == 0xff80) {
-            value = 0;
-        } else {
-            value = 60000000 / period;
+        switch (telemetry_type) {
+        case EDT_PREFIX_TEMPERATURE:
+            type = DSHOT_TELEMETRY_TEMPERATURE;
+            value = data;
+            break;
+        case EDT_PREFIX_VOLTAGE:
+            type = DSHOT_TELEMETRY_VOLTAGE;
+            value = data * 25;
+            break;
+        case EDT_PREFIX_CURRENT:
+            type = DSHOT_TELEMETRY_CURRENT;
+            value = data;
+            break;
+        case EDT_PREFIX_DEBUG1:
+            type = DSHOT_TELEMETRY_DEBUG1;
+            value = data;
+            break;
+        case EDT_PREFIX_DEBUG2:
+            type = DSHOT_TELEMETRY_DEBUG2;
+            value = data;
+            break;
+        case EDT_PREFIX_STRESS:
+            type = DSHOT_TELEMETRY_STRESS;
+            value = data;
+            break;
+        case EDT_PREFIX_STATUS:
+            type = DSHOT_TELEMETRY_STATUS;
+            value = data;
+            break;
+        default:
+            motor->stats.rx_bad_type++;
+            return;
         }
-        break;
     }
+
+    if (value < 0) {
+        motor->stats.rx_bad_type++;
+        return;
     }
 
     motor->stats.rx_frames++;
@@ -167,6 +185,7 @@ static void dshot_interpret_erpm_telemetry(struct dshot_controller *controller, 
 static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
     int error = 0;
     uint16_t crc;
+    uint16_t raw_value;
     uint32_t gcr;
     uint32_t edt;
     struct dshot_motor *motor = &controller->motor[controller->channel];
@@ -198,7 +217,15 @@ static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
         return;
     }
 
-    dshot_interpret_erpm_telemetry(controller, edt);
+    raw_value = edt >> 4;
+    if (((raw_value & 0x0F00) == 0x0E00) &&
+        (motor->current_command == DSHOT_EXTENDED_TELEMETRY_ENABLE)) {
+        motor->edt_enabled = true;
+        motor->stats.rx_frames++;
+        return;
+    }
+
+    dshot_interpret_telemetry(controller, edt);
 }
 
 static void dshot_cycle_channel(struct dshot_controller *controller) {
@@ -219,20 +246,7 @@ void dshot_loop_async_start(struct dshot_controller *controller) {
     }
 
     motor = &controller->motor[controller->channel];
-    if (motor->command_counter > 0) {
-        motor->command_counter--;
-        if (motor->command_counter == 0) {
-            motor->frame = motor->last_throttle_frame;
-        }
-    }
-
-    if (motor->delaying) {
-        if (absolute_time_diff_us(get_absolute_time(), motor->delay_until) >= 0) {
-            motor->delaying = false;
-        }
-    }
-
-    if (!motor->delaying && pio_sm_is_tx_fifo_empty(controller->pio, controller->sm)) {
+    if (pio_sm_is_tx_fifo_empty(controller->pio, controller->sm)) {
         uint32_t cycles = (25 * controller->speed * 40) / 1000;
         pio_sm_put(controller->pio, controller->sm, ~motor->frame << 16);
         pio_sm_put(controller->pio, controller->sm, cycles);
@@ -245,6 +259,15 @@ void dshot_loop_async_complete(struct dshot_controller *controller) {
 
     recv = pio_sm_get_blocking(controller->pio, controller->sm);
     dshot_receive(controller, recv);
+
+    if (controller->motor[controller->channel].command_counter > 0) {
+        controller->motor[controller->channel].command_counter--;
+        if (controller->motor[controller->channel].command_counter == 0) {
+            controller->motor[controller->channel].frame =
+                controller->motor[controller->channel].last_throttle_frame;
+            controller->motor[controller->channel].current_command = 0;
+        }
+    }
 
     if (absolute_time_diff_us(controller->command_last_time, get_absolute_time()) >
         DSHOT_IDLE_THRESHOLD) {
@@ -282,15 +305,10 @@ void dshot_command(struct dshot_controller *controller, uint16_t channel, uint16
     motor = &controller->motor[channel];
 
     motor->frame = dshot_compute_frame(command, 1);
+    motor->current_command = command;
     motor->command_counter = repeat_count;
-
-    motor->delaying = false;
-    if (command == DSHOT_CMD_SAVE_SETTINGS) {
-        motor->delaying = true;
-        motor->delay_until = delayed_by_ms(get_absolute_time(), 35);
-    } else if (command == DSHOT_CMD_ESC_INFO) {
-        motor->delaying = true;
-        motor->delay_until = delayed_by_ms(get_absolute_time(), 12);
+    if (command == DSHOT_EXTENDED_TELEMETRY_DISABLE) {
+        motor->edt_enabled = false;
     }
 
     controller->command_last_time = get_absolute_time();
@@ -305,9 +323,10 @@ void dshot_throttle(struct dshot_controller *controller, uint16_t channel, uint1
 
     motor = &controller->motor[channel];
 
-    motor->frame = dshot_compute_frame(throttle, 0);
-    motor->last_throttle_frame = motor->frame;
-    motor->command_counter = 0;
+    motor->last_throttle_frame = dshot_compute_frame(throttle, 0);
+    if (motor->command_counter == 0) {
+        motor->frame = motor->last_throttle_frame;
+    }
 
     controller->command_last_time = get_absolute_time();
 }

@@ -79,10 +79,10 @@ struct dshot_statistics {
 struct dshot_motor {
     uint16_t frame;
     uint16_t last_throttle_frame;
+    uint16_t current_command;
     uint8_t command_counter;
     struct dshot_statistics stats;
-    bool delaying;
-    absolute_time_t delay_until;
+    bool edt_enabled;
 };
 
 typedef void (*dshot_telemetry_callback_t)(void *context, int channel,
