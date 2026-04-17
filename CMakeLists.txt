@@ -20,6 +20,6 @@ add_executable(${DSHOT_EXE_NAME} src/dshot/main.c src/dshot/dshot.c)
 
 pico_generate_pio_header(${DSHOT_EXE_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/dshot/dshot.pio)
 
-target_link_libraries(${DSHOT_EXE_NAME} pico_stdlib pico_stdio_usb hardware_clocks hardware_pio)
+target_link_libraries(${DSHOT_EXE_NAME} pico_stdlib pico_stdio_usb hardware_clocks hardware_pio hardware_sync)
 
 pico_add_extra_outputs(${DSHOT_EXE_NAME})

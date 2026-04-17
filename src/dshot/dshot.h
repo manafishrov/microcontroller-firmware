@@ -1,33 +1,52 @@
+/*
+ * DShot protocol driver with bidirectional telemetry and Extended DShot Telemetry (EDT).
+ * Derived from pio-dshot by Simon Wunderlich.
+ *
+ * EDT specification: https://github.com/bird-sanctuary/extended-dshot-telemetry
+ * Protocol handling follows the Betaflight implementation.
+ */
+
 #ifndef DSHOT_H
 #define DSHOT_H
 
 #include <hardware/clocks.h>
 #include <hardware/pio.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #define DSHOT_MAX_CHANNELS 26
+
+/* Safety timeout: zero throttle if no command received for this duration (us) */
 #define DSHOT_IDLE_THRESHOLD (500 * 1000)
 
-#define EDT_PREFIX_TEMPERATURE 0x2
-#define EDT_PREFIX_VOLTAGE 0x4
-#define EDT_PREFIX_CURRENT 0x6
-#define EDT_PREFIX_DEBUG1 0x8
-#define EDT_PREFIX_DEBUG2 0xA
-#define EDT_PREFIX_STRESS 0xC
-#define EDT_PREFIX_STATUS 0xE
+/* Returned by eRPM decode when the telemetry period is zero (invalid frame) */
+#define DSHOT_TELEMETRY_INVALID 0xFFFF
 
+/*
+ * Telemetry type enum. Order matches Betaflight's extendedTelemetryLookup table
+ * and the EDT spec type field (telemetry_type >> 1 indexes directly into this).
+ * Values double as bit indices in the telemetry_types bitmask.
+ */
 enum dshot_telemetry_type {
-    DSHOT_TELEMETRY_ERPM,
-    DSHOT_TELEMETRY_VOLTAGE,
-    DSHOT_TELEMETRY_CURRENT,
-    DSHOT_TELEMETRY_TEMPERATURE,
-    DSHOT_TELEMETRY_DEBUG1,
-    DSHOT_TELEMETRY_DEBUG2,
-    DSHOT_TELEMETRY_STRESS,
-    DSHOT_TELEMETRY_STATUS,
+    DSHOT_TELEMETRY_TYPE_ERPM,
+    DSHOT_TELEMETRY_TYPE_TEMPERATURE,
+    DSHOT_TELEMETRY_TYPE_VOLTAGE,
+    DSHOT_TELEMETRY_TYPE_CURRENT,
+    DSHOT_TELEMETRY_TYPE_DEBUG1,
+    DSHOT_TELEMETRY_TYPE_DEBUG2,
+    DSHOT_TELEMETRY_TYPE_DEBUG3,
+    DSHOT_TELEMETRY_TYPE_STATE_EVENTS,
+    DSHOT_TELEMETRY_TYPE_COUNT,
 };
 
+/* Bitmask covering all EDT types (everything except eRPM).
+ * Non-zero when ANDed with telemetry_types means EDT frames have been received. */
+#define DSHOT_EXTENDED_TELEMETRY_MASK                                                              \
+    ((((1u << DSHOT_TELEMETRY_TYPE_COUNT) - 1u)) & ~(1u << DSHOT_TELEMETRY_TYPE_ERPM))
+
+/* DShot special commands (values 0-47, sent with telemetry bit = 1) */
 enum dshot_commands {
+    DSHOT_CMD_MOTOR_STOP = 0,
     DSHOT_CMD_BEEP1 = 1,
     DSHOT_CMD_BEEP2 = 2,
     DSHOT_CMD_BEEP3 = 3,
@@ -67,6 +86,18 @@ enum dshot_commands {
     DSHOT_MAX_COMMAND = 48,
 };
 
+/* Telemetry quality: 600ms sliding window (6 x 100ms buckets) */
+#define DSHOT_TELEMETRY_QUALITY_BUCKET_MS 100
+#define DSHOT_TELEMETRY_QUALITY_BUCKET_COUNT 6
+
+struct dshot_telemetry_quality {
+    uint32_t packet_count_sum;
+    uint32_t invalid_count_sum;
+    uint32_t packet_count_array[DSHOT_TELEMETRY_QUALITY_BUCKET_COUNT];
+    uint32_t invalid_count_array[DSHOT_TELEMETRY_QUALITY_BUCKET_COUNT];
+    uint8_t last_bucket_index;
+};
+
 struct dshot_statistics {
     uint32_t tx_frames;
     uint32_t rx_frames;
@@ -77,16 +108,20 @@ struct dshot_statistics {
 };
 
 struct dshot_motor {
-    uint16_t frame;
-    uint16_t last_throttle_frame;
-    uint16_t current_command;
-    uint8_t command_counter;
+    uint16_t frame;               /* Current DShot frame to transmit */
+    uint16_t last_throttle_frame; /* Saved throttle frame during command sequences */
+    uint16_t last_throttle_value; /* Cached throttle value to skip redundant frame computation */
+    uint16_t current_command;     /* Active DShot command (0 = none) */
+    uint8_t command_counter;      /* Remaining command repetitions */
+    uint8_t telemetry_types;      /* Bitmask of received EDT types (1 << type) */
+    uint32_t telemetry_data[DSHOT_TELEMETRY_TYPE_COUNT]; /* Latest value per type */
+    uint32_t max_temp;                                   /* Peak temperature observed */
     struct dshot_statistics stats;
-    bool edt_enabled;
+    struct dshot_telemetry_quality quality;
 };
 
 typedef void (*dshot_telemetry_callback_t)(void *context, int channel,
-                                           enum dshot_telemetry_type type, int value);
+                                           enum dshot_telemetry_type type, uint32_t value);
 
 struct dshot_controller {
     pio_sm_config c;
@@ -94,8 +129,9 @@ struct dshot_controller {
     uint8_t sm;
     uint8_t pin;
     uint8_t num_channels;
-    uint8_t channel;
-    uint16_t speed;
+    uint8_t channel;        /* Currently active channel for PIO multiplexing */
+    uint16_t speed;         /* DShot speed in kbit/s (e.g. 600) */
+    bool edt_always_decode; /* Attempt EDT decode before EDT handshake completes */
     struct dshot_motor motor[DSHOT_MAX_CHANNELS];
     absolute_time_t command_last_time;
 
@@ -103,13 +139,16 @@ struct dshot_controller {
     void *telemetry_cb_context;
 };
 
+void dshot_controller_init(struct dshot_controller *controller, uint16_t dshot_speed, PIO pio,
+                           uint8_t sm, int pin, int channels);
+
+void dshot_register_telemetry_cb(struct dshot_controller *controller,
+                                 dshot_telemetry_callback_t telemetry_cb, void *context);
+
 void dshot_command(struct dshot_controller *controller, uint16_t channel, uint16_t command,
                    uint8_t repeat_count);
 
 void dshot_throttle(struct dshot_controller *controller, uint16_t channel, uint16_t throttle);
-
-void dshot_controller_init(struct dshot_controller *controller, uint16_t dshot_speed, PIO pio,
-                           uint8_t sm, int pin, int channels);
 
 void dshot_loop(struct dshot_controller *controller);
 
@@ -117,7 +156,13 @@ void dshot_loop_async_start(struct dshot_controller *controller);
 
 void dshot_loop_async_complete(struct dshot_controller *controller);
 
-void dshot_register_telemetry_cb(struct dshot_controller *controller,
-                                 dshot_telemetry_callback_t telemetry_cb, void *context);
+void dshot_mark_activity(struct dshot_controller *controller);
+
+/* Returns true if all motors have received at least one eRPM telemetry frame */
+bool dshot_is_telemetry_active(const struct dshot_controller *controller);
+
+/* Returns invalid packet percentage in 0.01% units (0 = perfect, 10000 = 100%) */
+int16_t dshot_get_telemetry_invalid_percent(const struct dshot_controller *controller,
+                                            uint8_t channel);
 
 #endif

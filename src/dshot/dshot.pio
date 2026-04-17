@@ -1,37 +1,55 @@
+;
+; DShot bidirectional PIO program.
+; Single state machine handles TX (16-bit DShot frame) + RX (21-bit GCR telemetry response).
+;
+; Bit timing: 40 PIO cycles per DShot bit.
+;   TX bit encoding (inverted frame, active-low with pull-up):
+;     set LOW [15 cycles] -> out DATA [15 cycles] -> set HIGH [10 cycles]
+;     Bit '0' (inverted='1'): 15 low + 25 high = 62.5% duty
+;     Bit '1' (inverted='0'): 30 low + 10 high = 25.0% duty
+;
+;   RX bit sampling: 32 PIO cycles per bit (5/4 ratio vs TX for GCR encoding).
+;     Samples pin at center of each bit period.
+;
+
 .program pio_dshot
 .wrap_target
-    set pindirs, 1
-    pull
+    ; --- TX phase: send 16-bit DShot frame ---
+    set pindirs, 1          ; Drive pin as output
+    pull                    ; Load inverted frame from TX FIFO
 
-    set x, 15
+    set x, 15              ; 16 bits to transmit (x counts 15 down to 0)
 tx_loop:
-    set pins, 0	[14]
-    out pins, 1 [14]
-    set pins, 1 [8]
+    set pins, 0	    [14]   ; T1: pin LOW for 15 cycles
+    out pins, 1     [14]   ; T2: pin = data bit for 15 cycles
+    set pins, 1     [8]    ; T3: pin HIGH for 9 cycles (+1 for jmp = 10)
     jmp x-- tx_loop
 
-    pull
+    ; --- Inter-frame gap: wait for ESC to prepare response ---
+    pull                    ; Load wait cycle count from TX FIFO
     mov x, osr
 waitloop_after_tx:
     jmp x-- waitloop_after_tx
 
-    set pindirs, 0
+    ; --- RX phase: receive 21-bit GCR telemetry response ---
+    set pindirs, 0          ; Switch pin to input (pull-up keeps line high)
 
-     set x, 31
+    set x, 31              ; Timeout counter for detecting start of response
 waitloop_for_rx:
-     jmp !x wait_after_rx
-     jmp x-- c
-c:   jmp pin waitloop_for_rx
+    jmp !x wait_after_rx   ; Timeout: no response received, push zeros
+    jmp x-- c
+c:  jmp pin waitloop_for_rx ; Pin high = idle, keep waiting for low edge
 
 start_rx:
-    set x, 20 [8]
+    set x, 20  [8]         ; 21 bits to sample, initial delay for bit alignment
 rx_loop:
-    in pins, 1	[30]
+    in pins, 1	    [30]    ; Sample pin, wait 31 cycles total (32 cycles/bit)
     jmp x-- rx_loop
 
+    ; --- Cleanup: push result and return to idle ---
 wait_after_rx:
-    push
-    set pindirs, 1
-    set pins, 1 [2]
+    push                    ; Push received 21-bit value (or 0 on timeout) to RX FIFO
+    set pindirs, 1          ; Return to output mode
+    set pins, 1     [2]    ; Drive pin high (idle state)
 
 .wrap

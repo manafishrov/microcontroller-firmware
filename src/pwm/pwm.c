@@ -20,6 +20,7 @@ void pwm_controller_init(struct pwm_controller *controller, uint *pins, uint num
         uint slice = pwm_gpio_to_slice_num(pins[i]);
         controller->slice[i] = slice;
 
+        /* Divider = sys_clk / (frequency * steps) gives 1us per PWM step */
         uint32_t clock = clock_get_hz(clk_sys);
         uint32_t divider = clock / (PWM_FREQUENCY * PWM_STEPS);
 

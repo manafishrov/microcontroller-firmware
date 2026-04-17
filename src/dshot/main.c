@@ -1,5 +1,12 @@
+/*
+ * DShot motor controller application for RP2040.
+ * Manages 8 motors across 2 PIO state machines (4 channels each),
+ * handles USB command input, telemetry output, and EDT negotiation.
+ */
+
 #include "dshot.h"
 #include <hardware/pio.h>
+#include <hardware/sync.h>
 #include <pico/error.h>
 #include <pico/stdio.h>
 #include <pico/time.h>
@@ -9,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Hardware pin mapping: motors 0-3 on pins 6-9, motors 4-7 on pins 18-21 */
 #define MOTOR0_PIN_BASE 6
 #define MOTOR1_PIN_BASE 18
 #define NUM_MOTORS_0 4
@@ -22,6 +30,12 @@
 
 #define COMM_TIMEOUT_MS 200
 
+/*
+ * Throttle command mapping (from USB input to DShot values):
+ *   USB 0    = max reverse  -> DShot 1047 (reverse range: 48-1047)
+ *   USB 1000 = neutral/stop -> DShot 0
+ *   USB 2000 = max forward  -> DShot 2047 (forward range: 1048-2047)
+ */
 #define CMD_THROTTLE_MIN_REVERSE 0
 #define CMD_THROTTLE_NEUTRAL 1000
 #define CMD_THROTTLE_MAX_FORWARD 2000
@@ -31,16 +45,22 @@
 #define DSHOT_CMD_MIN_FORWARD 1048
 #define DSHOT_CMD_MAX_FORWARD 2047
 
+/*
+ * Telemetry USB packet format (8 bytes):
+ *   [0xA5] [motor_id] [type] [value_le32...] [xor_checksum]
+ * Type IDs are a stable wire format, independent of the dshot_telemetry_type enum.
+ */
 #define TELEMETRY_START_BYTE 0xA5
 #define TELEMETRY_PACKET_SIZE 8
-#define TELEMETRY_ID_VOLTAGE 0xFF
 #define TELEMETRY_TYPE_ERPM 0
 #define TELEMETRY_TYPE_VOLTAGE 1
 #define TELEMETRY_TYPE_TEMPERATURE 2
 #define TELEMETRY_TYPE_CURRENT 3
-#define TELEMETRY_TYPE_STRESS 4
-#define TELEMETRY_TYPE_EDT_STATUS 5
+#define TELEMETRY_TYPE_SIGNAL_QUALITY 4
 
+#define TELEMETRY_QUEUE_CAPACITY 256
+
+/* USB input packet format: [0x5A] [throttle_le16 x NUM_MOTORS] [xor_checksum] */
 #define INPUT_START_BYTE 0x5A
 #define INPUT_PACKET_SIZE (1 + (NUM_MOTORS * 2) + 1)
 
@@ -48,6 +68,11 @@ static uint16_t thruster_values[NUM_MOTORS] = {0};
 static absolute_time_t last_comm_time;
 static bool edt_enable_scheduled[NUM_MOTORS] = {false};
 static absolute_time_t edt_enable_time[NUM_MOTORS];
+static absolute_time_t next_quality_report_time;
+static uint8_t telemetry_queue[TELEMETRY_QUEUE_CAPACITY][TELEMETRY_PACKET_SIZE];
+static uint16_t telemetry_queue_head = 0;
+static uint16_t telemetry_queue_tail = 0;
+#define QUALITY_REPORT_INTERVAL_MS 100
 
 typedef struct {
     uint8_t controller_base_global_id;
@@ -64,7 +89,36 @@ static uint8_t calculate_checksum(const uint8_t *data, size_t len) {
     return checksum;
 }
 
-uint16_t translate_throttle_to_dshot(uint16_t cmd_throttle) {
+static uint16_t telemetry_queue_advance(uint16_t index) {
+    return (uint16_t)((index + 1) % TELEMETRY_QUEUE_CAPACITY);
+}
+
+static void flush_telemetry_queue(void) {
+    if (telemetry_queue_tail == telemetry_queue_head) {
+        return;
+    }
+
+    while (true) {
+        uint8_t packet[TELEMETRY_PACKET_SIZE];
+        uint32_t irq_state = save_and_disable_interrupts();
+
+        if (telemetry_queue_tail == telemetry_queue_head) {
+            restore_interrupts(irq_state);
+            break;
+        }
+
+        memcpy(packet, telemetry_queue[telemetry_queue_tail], TELEMETRY_PACKET_SIZE);
+        telemetry_queue_tail = telemetry_queue_advance(telemetry_queue_tail);
+        restore_interrupts(irq_state);
+
+        fwrite(packet, 1, TELEMETRY_PACKET_SIZE, stdout);
+    }
+
+    fflush(stdout);
+}
+
+/* Map USB throttle command (0-2000) to DShot value (0, 48-2047) */
+static uint16_t translate_throttle_to_dshot(uint16_t cmd_throttle) {
     if (cmd_throttle == CMD_THROTTLE_NEUTRAL) {
         return DSHOT_CMD_NEUTRAL;
     }
@@ -77,55 +131,82 @@ uint16_t translate_throttle_to_dshot(uint16_t cmd_throttle) {
     return DSHOT_CMD_NEUTRAL;
 }
 
-void send_telemetry(uint8_t motor_id, uint8_t type, int32_t value) {
-    uint8_t buf[TELEMETRY_PACKET_SIZE];
-    buf[0] = TELEMETRY_START_BYTE;
-    buf[1] = motor_id;
-    buf[2] = type;
-    memcpy(&buf[3], &value, 4);
-    buf[TELEMETRY_PACKET_SIZE - 1] = calculate_checksum(&buf[0], TELEMETRY_PACKET_SIZE - 1);
-    fwrite(buf, 1, TELEMETRY_PACKET_SIZE, stdout);
-    fflush(stdout);
+static void send_telemetry(uint8_t motor_id, uint8_t type, int32_t value) {
+    uint32_t irq_state = save_and_disable_interrupts();
+    uint16_t next_head = telemetry_queue_advance(telemetry_queue_head);
+
+    if (next_head == telemetry_queue_tail) {
+        telemetry_queue_tail = telemetry_queue_advance(telemetry_queue_tail);
+    }
+
+    uint8_t *packet = telemetry_queue[telemetry_queue_head];
+    packet[0] = TELEMETRY_START_BYTE;
+    packet[1] = motor_id;
+    packet[2] = type;
+    memcpy(&packet[3], &value, 4);
+    packet[TELEMETRY_PACKET_SIZE - 1] = calculate_checksum(&packet[0], TELEMETRY_PACKET_SIZE - 1);
+    telemetry_queue_head = next_head;
+    restore_interrupts(irq_state);
 }
 
-void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type,
-                        int value) { // NOLINT(misc-unused-parameters)
-    (void)channel;
+/* DShot telemetry callback: map internal type enum to wire format and send over USB */
+static void telemetry_callback(void *context, int channel, enum dshot_telemetry_type type,
+                               uint32_t value) {
     telemetry_context_t *ctx = (telemetry_context_t *)context;
     uint8_t global_motor_id = ctx->controller_base_global_id + channel;
 
-    if (type == DSHOT_TELEMETRY_ERPM) {
-        send_telemetry(global_motor_id, TELEMETRY_TYPE_ERPM, value);
-    } else if (type == DSHOT_TELEMETRY_VOLTAGE) {
-        send_telemetry(global_motor_id, TELEMETRY_TYPE_VOLTAGE, value);
-    } else if (type == DSHOT_TELEMETRY_TEMPERATURE) {
-        send_telemetry(global_motor_id, TELEMETRY_TYPE_TEMPERATURE, value);
-    } else if (type == DSHOT_TELEMETRY_CURRENT) {
-        send_telemetry(global_motor_id, TELEMETRY_TYPE_CURRENT, value);
-    } else if (type == DSHOT_TELEMETRY_STRESS) {
-        send_telemetry(global_motor_id, TELEMETRY_TYPE_STRESS, value);
-    } else if (type == DSHOT_TELEMETRY_STATUS) {
-        send_telemetry(global_motor_id, TELEMETRY_TYPE_EDT_STATUS, value);
+    switch (type) {
+    case DSHOT_TELEMETRY_TYPE_ERPM:
+        send_telemetry(global_motor_id, TELEMETRY_TYPE_ERPM, (int32_t)value);
+        break;
+    case DSHOT_TELEMETRY_TYPE_VOLTAGE:
+        send_telemetry(global_motor_id, TELEMETRY_TYPE_VOLTAGE, (int32_t)value);
+        break;
+    case DSHOT_TELEMETRY_TYPE_TEMPERATURE:
+        send_telemetry(global_motor_id, TELEMETRY_TYPE_TEMPERATURE, (int32_t)value);
+        break;
+    case DSHOT_TELEMETRY_TYPE_CURRENT:
+        send_telemetry(global_motor_id, TELEMETRY_TYPE_CURRENT, (int32_t)value);
+        break;
+    default:
+        break;
     }
 }
 
-bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
-                        absolute_time_t *last_comm_time) {
-    if (usb_buf[0] == INPUT_START_BYTE) {
-        uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
-        uint8_t calculated_checksum = calculate_checksum(&usb_buf[0], INPUT_PACKET_SIZE - 1);
-        if (received_checksum == calculated_checksum) {
-            for (int i = 0; i < NUM_MOTORS; ++i) {
-                thruster_values[i] = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
-            }
-            *last_comm_time = get_absolute_time();
-            return true;
-        }
+static bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
+                               absolute_time_t *last_comm_time) {
+    if (usb_buf[0] != INPUT_START_BYTE) {
+        return false;
     }
-    return false;
+
+    uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
+    uint8_t calculated_checksum = calculate_checksum(&usb_buf[0], INPUT_PACKET_SIZE - 1);
+    if (received_checksum != calculated_checksum) {
+        return false;
+    }
+
+    for (int i = 0; i < NUM_MOTORS; ++i) {
+        thruster_values[i] = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
+    }
+    *last_comm_time = get_absolute_time();
+    return true;
 }
 
-void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values, size_t *usb_idx) {
+static bool quality_report_due(absolute_time_t now) {
+    if (absolute_time_diff_us(next_quality_report_time, now) < 0) {
+        return false;
+    }
+
+    do {
+        next_quality_report_time =
+            delayed_by_ms(next_quality_report_time, QUALITY_REPORT_INTERVAL_MS);
+    } while (absolute_time_diff_us(next_quality_report_time, now) >= 0);
+
+    return true;
+}
+
+static void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values,
+                          size_t *usb_idx) {
     if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > COMM_TIMEOUT_MS * 1000) {
         for (int i = 0; i < NUM_MOTORS; ++i) {
             thruster_values[i] = CMD_THROTTLE_NEUTRAL;
@@ -140,10 +221,17 @@ static bool controller_has_pending_work(const struct dshot_controller *controlle
             return true;
         }
     }
-
     return false;
 }
 
+static void get_motor_controller(int motor_index, struct dshot_controller **ctrl, int *channel,
+                                 struct dshot_controller *controller0,
+                                 struct dshot_controller *controller1) {
+    *ctrl = (motor_index < NUM_MOTORS_0) ? controller0 : controller1;
+    *channel = (motor_index < NUM_MOTORS_0) ? motor_index : (motor_index - NUM_MOTORS_0);
+}
+
+/* Run DShot loop on both controllers until all pending commands are sent */
 static void run_until_idle(struct dshot_controller *controller0,
                            struct dshot_controller *controller1) {
     while (controller_has_pending_work(controller0) || controller_has_pending_work(controller1)) {
@@ -160,19 +248,25 @@ static void run_frame_cycles(struct dshot_controller *controller0,
     }
 }
 
+/*
+ * Send a DShot command to all motors with proper timing.
+ * DShot commands must be sent multiple times (typically 6-10) for ESC to accept.
+ * Each repetition runs a full DShot cycle with 1ms spacing between bursts.
+ */
 static void send_command_to_all(struct dshot_controller *controller0,
                                 struct dshot_controller *controller1, uint16_t command,
                                 uint8_t repeat_count) {
     sleep_us(10000);
     for (int repeat = 0; repeat < repeat_count; ++repeat) {
         for (int i = 0; i < NUM_MOTORS; ++i) {
-            struct dshot_controller *ctrl = (i < NUM_MOTORS_0) ? controller0 : controller1;
-            int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
-
+            struct dshot_controller *ctrl;
+            int channel;
+            get_motor_controller(i, &ctrl, &channel, controller0, controller1);
             dshot_command(ctrl, channel, command, 1);
         }
 
         run_until_idle(controller0, controller1);
+        flush_telemetry_queue();
         if (repeat + 1 < repeat_count) {
             sleep_us(1000);
         }
@@ -185,67 +279,111 @@ static void send_command_to_all(struct dshot_controller *controller0,
     }
 }
 
-void enable_edt_if_idle(const uint16_t *thruster_values, struct dshot_controller *controller0,
-                        struct dshot_controller *controller1) {
-    bool all_idle = true;
+/*
+ * Retry EDT enable for motors that haven't activated yet.
+ * Only attempts when all motors are idle (ESCs require motor stop for commands).
+ * Uses repeat_count=10 to send a proper command burst per motor.
+ */
+static void enable_edt_if_idle(const uint16_t *thruster_values,
+                               struct dshot_controller *controller0,
+                               struct dshot_controller *controller1) {
     absolute_time_t now = get_absolute_time();
 
     for (int i = 0; i < NUM_MOTORS; ++i) {
         if (thruster_values[i] != CMD_THROTTLE_NEUTRAL) {
-            all_idle = false;
-            break;
+            for (int j = 0; j < NUM_MOTORS; ++j) {
+                edt_enable_scheduled[j] = false;
+            }
+            return;
         }
     }
 
-    if (all_idle) {
-        for (int i = 0; i < NUM_MOTORS; ++i) {
-            struct dshot_controller *ctrl = (i < NUM_MOTORS_0) ? controller0 : controller1;
-            int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
-            struct dshot_motor *motor = &ctrl->motor[channel];
+    for (int i = 0; i < NUM_MOTORS; ++i) {
+        struct dshot_controller *ctrl;
+        int channel;
+        get_motor_controller(i, &ctrl, &channel, controller0, controller1);
+        struct dshot_motor *motor = &ctrl->motor[channel];
 
-            if (motor->edt_enabled) {
-                edt_enable_scheduled[i] = false;
-                continue;
-            }
-
-            if (!edt_enable_scheduled[i]) {
-                edt_enable_scheduled[i] = true;
-                edt_enable_time[i] = delayed_by_us(now, 10000);
-            }
-
-            if (motor->current_command == 0 &&
-                absolute_time_diff_us(edt_enable_time[i], now) >= 0) {
-                dshot_command(ctrl, channel, DSHOT_EXTENDED_TELEMETRY_ENABLE, 1);
-                edt_enable_time[i] = delayed_by_us(now, 1000);
-            }
-        }
-    } else {
-        for (int i = 0; i < NUM_MOTORS; ++i) {
+        /* Skip motors that already have EDT active (detected via bitmask) */
+        if (motor->telemetry_types & DSHOT_EXTENDED_TELEMETRY_MASK) {
             edt_enable_scheduled[i] = false;
+            continue;
+        }
+
+        if (!edt_enable_scheduled[i]) {
+            edt_enable_scheduled[i] = true;
+            edt_enable_time[i] = delayed_by_us(now, 10000);
+        }
+
+        if (motor->current_command == 0 && absolute_time_diff_us(edt_enable_time[i], now) >= 0) {
+            dshot_command(ctrl, channel, DSHOT_EXTENDED_TELEMETRY_ENABLE, 10);
+            edt_enable_time[i] = delayed_by_us(now, 10000);
         }
     }
 }
 
-void send_dshot_commands(uint16_t *thruster_values, struct dshot_controller *controller0,
-                         struct dshot_controller *controller1) {
+static void send_dshot_commands(uint16_t *thruster_values, struct dshot_controller *controller0,
+                                struct dshot_controller *controller1) {
     for (int i = 0; i < NUM_MOTORS; i++) {
-        struct dshot_controller *ctrl = (i < NUM_MOTORS_0) ? controller0 : controller1;
-        int channel = (i < NUM_MOTORS_0) ? i : (i - NUM_MOTORS_0);
-        uint16_t dshot_command_val = translate_throttle_to_dshot(thruster_values[i]);
-        dshot_throttle(ctrl, channel, dshot_command_val);
+        struct dshot_controller *ctrl;
+        int channel;
+        get_motor_controller(i, &ctrl, &channel, controller0, controller1);
+        dshot_throttle(ctrl, channel, translate_throttle_to_dshot(thruster_values[i]));
+    }
+}
+
+static void wait_for_telemetry(struct dshot_controller *controller0,
+                               struct dshot_controller *controller1) {
+    absolute_time_t deadline = delayed_by_ms(get_absolute_time(), 500);
+    while (!dshot_is_telemetry_active(controller0) || !dshot_is_telemetry_active(controller1)) {
+        dshot_loop(controller0);
+        dshot_loop(controller1);
+        flush_telemetry_queue();
+        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
+            break;
+        }
+    }
+}
+
+static size_t poll_usb_input(uint8_t *usb_buf, size_t usb_idx) {
+    int c = getchar_timeout_us(0);
+    while (c != PICO_ERROR_TIMEOUT) {
+        if (usb_idx == 0 && (uint8_t)c != INPUT_START_BYTE) {
+            usb_idx = 0;
+        } else if (usb_idx < INPUT_PACKET_SIZE) {
+            usb_buf[usb_idx++] = (uint8_t)c;
+        } else {
+            usb_idx = 0;
+        }
+        c = getchar_timeout_us(0);
+    }
+    return usb_idx;
+}
+
+static void send_quality_reports(struct dshot_controller *controller0,
+                                 struct dshot_controller *controller1) {
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        struct dshot_controller *ctrl;
+        int channel;
+        get_motor_controller(i, &ctrl, &channel, controller0, controller1);
+        send_telemetry(i, TELEMETRY_TYPE_SIGNAL_QUALITY,
+                       (int32_t)dshot_get_telemetry_invalid_percent(ctrl, channel));
     }
 }
 
 int main() {
     stdio_init_all();
 
+    /* Initialize two DShot controllers sharing one PIO block, one SM each */
     struct dshot_controller controller0;
     struct dshot_controller controller1;
     dshot_controller_init(&controller0, DSHOT_SPEED, DSHOT_PIO, DSHOT_SM_0, MOTOR0_PIN_BASE,
                           NUM_MOTORS_0);
+    controller0.edt_always_decode = true;
     dshot_register_telemetry_cb(&controller0, telemetry_callback, &context0);
     dshot_controller_init(&controller1, DSHOT_SPEED, DSHOT_PIO, DSHOT_SM_1, MOTOR1_PIN_BASE,
                           NUM_MOTORS_1);
+    controller1.edt_always_decode = true;
     dshot_register_telemetry_cb(&controller1, telemetry_callback, &context1);
 
     for (int i = 0; i < NUM_MOTORS; ++i) {
@@ -253,30 +391,27 @@ int main() {
         edt_enable_time[i] = get_absolute_time();
     }
     last_comm_time = get_absolute_time();
+    next_quality_report_time = get_absolute_time();
 
+    /* Startup sequence: arm ESCs, configure 3D mode, enable EDT */
     send_dshot_commands(thruster_values, &controller0, &controller1);
     run_frame_cycles(&controller0, &controller1, NUM_MOTORS * 4);
     send_command_to_all(&controller0, &controller1, DSHOT_CMD_3D_MODE_ON, 10);
     send_command_to_all(&controller0, &controller1, DSHOT_CMD_SAVE_SETTINGS, 10);
+    send_command_to_all(&controller0, &controller1, DSHOT_EXTENDED_TELEMETRY_ENABLE, 10);
+    wait_for_telemetry(&controller0, &controller1);
 
     static uint8_t usb_buf[INPUT_PACKET_SIZE];
     static size_t usb_idx = 0;
 
     while (true) {
-        int c = getchar_timeout_us(0);
-        while (c != PICO_ERROR_TIMEOUT) {
-            if (usb_idx == 0 && (uint8_t)c != INPUT_START_BYTE) {
-                usb_idx = 0;
-            } else if (usb_idx < sizeof(usb_buf)) {
-                usb_buf[usb_idx++] = (uint8_t)c;
-            } else {
-                usb_idx = 0;
-            }
-            c = getchar_timeout_us(0);
-        }
+        usb_idx = poll_usb_input(usb_buf, usb_idx);
 
-        if (usb_idx >= sizeof(usb_buf)) {
-            process_usb_packet(usb_buf, thruster_values, &last_comm_time);
+        if (usb_idx >= INPUT_PACKET_SIZE) {
+            if (process_usb_packet(usb_buf, thruster_values, &last_comm_time)) {
+                dshot_mark_activity(&controller0);
+                dshot_mark_activity(&controller1);
+            }
             usb_idx = 0;
         }
 
@@ -284,8 +419,14 @@ int main() {
         send_dshot_commands(thruster_values, &controller0, &controller1);
         enable_edt_if_idle(thruster_values, &controller0, &controller1);
 
+        if (quality_report_due(get_absolute_time())) {
+            send_quality_reports(&controller0, &controller1);
+        }
+
         dshot_loop(&controller0);
         dshot_loop(&controller1);
+
+        flush_telemetry_queue();
     }
     return 0;
 }

@@ -1,7 +1,7 @@
 # Microcontroller Firmware
 
-Firmware for the Raspberry Pi Pico used in the Manafish ROV to control thrusters.
-It supports two control protocols:
+Firmware for the Raspberry Pi Pico and Pico 2 used in the Manafish ROV to
+control thrusters. It supports two control protocols:
 
 - DShot (digital ESC control)
 - PWM (analog ESC control)
@@ -37,10 +37,13 @@ Run `make help` to list all available targets.
 
 Key targets include:
 
-- `make build` – Build DShot and PWM firmware
-- `make flash-dshot` – Build and flash DShot firmware
-- `make flash-pwm` – Build and flash PWM firmware
-- `make clean` – Remove build directory
+- `make build-pico` – Build DShot and PWM firmware for Pico
+- `make build-pico2` – Build DShot and PWM firmware for Pico 2
+- `make flash-dshot-pico` – Build and flash DShot firmware for Pico
+- `make flash-pwm-pico` – Build and flash PWM firmware for Pico
+- `make flash-dshot-pico2` – Build and flash DShot firmware for Pico 2
+- `make flash-pwm-pico2` – Build and flash PWM firmware for Pico 2
+- `make clean` – Remove build directories
 - `make format` – Format source code
 - `make format-check` – Verify formatting (useful for CI)
 - `make lint` – Lint and auto-fix C code
@@ -50,13 +53,14 @@ Key targets include:
 
 Compiled `.uf2` files appear in:
 
-- build/src/dshot/dshot.uf2
-- build/src/pwm/pwm.uf2
+- `build/pico/dshot.uf2` / `build/pico2/dshot.uf2`
+- `build/pico/pwm.uf2` / `build/pico2/pwm.uf2`
 
 ### Flashing
 
-Use `make flash-dshot` or `make flash-pwm`. Flashing works regardless of whether
-the Pico is in BOOTSEL mode—the device reboots automatically as needed.
+Use `make flash-dshot-pico` or `make flash-pwm-pico` (or the `-pico2` variants).
+Flashing works regardless of whether the Pico is in BOOTSEL mode—the device
+reboots automatically as needed.
 
 ## Debugging
 
