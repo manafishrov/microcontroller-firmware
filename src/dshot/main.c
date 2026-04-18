@@ -4,6 +4,7 @@
  * handles USB command input, telemetry output, and EDT negotiation.
  */
 
+#include "../log.h"
 #include "dshot.h"
 #include <hardware/pio.h>
 #include <hardware/sync.h>
@@ -26,7 +27,7 @@
 #define DSHOT_PIO pio0
 #define DSHOT_SM_0 0
 #define DSHOT_SM_1 1
-#define DSHOT_SPEED 600
+#define DSHOT_SPEED 300
 
 #define COMM_TIMEOUT_MS 200
 
@@ -69,6 +70,9 @@ static absolute_time_t last_comm_time;
 static bool edt_enable_scheduled[NUM_MOTORS] = {false};
 static absolute_time_t edt_enable_time[NUM_MOTORS];
 static absolute_time_t next_quality_report_time;
+static bool comm_timed_out = true;
+#define QUALITY_WARN_THRESHOLD 5000
+static bool quality_warned[NUM_MOTORS] = {false};
 static uint8_t telemetry_queue[TELEMETRY_QUEUE_CAPACITY][TELEMETRY_PACKET_SIZE];
 static uint16_t telemetry_queue_head = 0;
 static uint16_t telemetry_queue_tail = 0;
@@ -159,15 +163,33 @@ static void telemetry_callback(void *context, int channel, enum dshot_telemetry_
     case DSHOT_TELEMETRY_TYPE_ERPM:
         send_telemetry(global_motor_id, TELEMETRY_TYPE_ERPM, (int32_t)value);
         break;
-    case DSHOT_TELEMETRY_TYPE_VOLTAGE:
+    case DSHOT_TELEMETRY_TYPE_VOLTAGE: {
         send_telemetry(global_motor_id, TELEMETRY_TYPE_VOLTAGE, (int32_t)value);
+        char buf[40];
+        int len = snprintf(buf, sizeof(buf), "EDT voltage: motor=%u val=%lu", global_motor_id,
+                           (unsigned long)value);
+        if (len > 0)
+            log_info(buf);
         break;
-    case DSHOT_TELEMETRY_TYPE_TEMPERATURE:
+    }
+    case DSHOT_TELEMETRY_TYPE_TEMPERATURE: {
         send_telemetry(global_motor_id, TELEMETRY_TYPE_TEMPERATURE, (int32_t)value);
+        char buf[40];
+        int len = snprintf(buf, sizeof(buf), "EDT temp: motor=%u val=%lu", global_motor_id,
+                           (unsigned long)value);
+        if (len > 0)
+            log_info(buf);
         break;
-    case DSHOT_TELEMETRY_TYPE_CURRENT:
+    }
+    case DSHOT_TELEMETRY_TYPE_CURRENT: {
         send_telemetry(global_motor_id, TELEMETRY_TYPE_CURRENT, (int32_t)value);
+        char buf[40];
+        int len = snprintf(buf, sizeof(buf), "EDT current: motor=%u val=%lu", global_motor_id,
+                           (unsigned long)value);
+        if (len > 0)
+            log_info(buf);
         break;
+    }
     default:
         break;
     }
@@ -212,6 +234,10 @@ static void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_val
             thruster_values[i] = CMD_THROTTLE_NEUTRAL;
         }
         *usb_idx = 0;
+        if (!comm_timed_out) {
+            comm_timed_out = true;
+            log_warn("USB comm lost, motors neutral");
+        }
     }
 }
 
@@ -360,19 +386,47 @@ static size_t poll_usb_input(uint8_t *usb_buf, size_t usb_idx) {
     return usb_idx;
 }
 
+static const char *dominant_failure_name(const struct dshot_statistics *stats) {
+    uint32_t max_val = stats->rx_timeout;
+    const char *name = "timeout";
+    if (stats->rx_bad_gcr > max_val) {
+        max_val = stats->rx_bad_gcr;
+        name = "bad_gcr";
+    }
+    if (stats->rx_bad_crc > max_val) {
+        max_val = stats->rx_bad_crc;
+        name = "bad_crc";
+    }
+    if (stats->rx_bad_type > max_val) {
+        name = "bad_type";
+    }
+    return name;
+}
+
 static void send_quality_reports(struct dshot_controller *controller0,
                                  struct dshot_controller *controller1) {
     for (int i = 0; i < NUM_MOTORS; i++) {
         struct dshot_controller *ctrl;
         int channel;
         get_motor_controller(i, &ctrl, &channel, controller0, controller1);
-        send_telemetry(i, TELEMETRY_TYPE_SIGNAL_QUALITY,
-                       (int32_t)dshot_get_telemetry_invalid_percent(ctrl, channel));
+        int16_t quality = dshot_get_telemetry_quality_percent(ctrl, channel);
+        send_telemetry(i, TELEMETRY_TYPE_SIGNAL_QUALITY, (int32_t)quality);
+
+        if (quality < QUALITY_WARN_THRESHOLD && !quality_warned[i]) {
+            quality_warned[i] = true;
+            char buf[48];
+            snprintf(buf, sizeof(buf), "Motor %d: signal degraded, cause: %s", i,
+                     dominant_failure_name(&ctrl->motor[channel].stats));
+            log_warn(buf);
+        } else if (quality >= QUALITY_WARN_THRESHOLD && quality_warned[i]) {
+            quality_warned[i] = false;
+        }
     }
 }
 
 int main() {
     stdio_init_all();
+    log_init();
 
     /* Initialize two DShot controllers sharing one PIO block, one SM each */
     struct dshot_controller controller0;
@@ -411,6 +465,29 @@ int main() {
             if (process_usb_packet(usb_buf, thruster_values, &last_comm_time)) {
                 dshot_mark_activity(&controller0);
                 dshot_mark_activity(&controller1);
+                if (comm_timed_out) {
+                    comm_timed_out = false;
+                    log_info("DShot300, 8 motors, USB comm active");
+
+                    char status[32];
+                    memcpy(status, "Motor telemetry: ", 17);
+                    for (int i = 0; i < NUM_MOTORS; i++) {
+                        struct dshot_controller *ctrl;
+                        int channel;
+                        get_motor_controller(i, &ctrl, &channel, &controller0, &controller1);
+                        bool active =
+                            ctrl->motor[channel].telemetry_types & (1 << DSHOT_TELEMETRY_TYPE_ERPM);
+                        status[17 + i] = active ? '1' : '0';
+                    }
+                    status[17 + NUM_MOTORS] = '\0';
+
+                    if (dshot_is_telemetry_active(&controller0) &&
+                        dshot_is_telemetry_active(&controller1)) {
+                        log_info(status);
+                    } else {
+                        log_warn(status);
+                    }
+                }
             }
             usb_idx = 0;
         }

@@ -161,8 +161,8 @@ void dshot_mark_activity(struct dshot_controller *controller);
 /* Returns true if all motors have received at least one eRPM telemetry frame */
 bool dshot_is_telemetry_active(const struct dshot_controller *controller);
 
-/* Returns invalid packet percentage in 0.01% units (0 = perfect, 10000 = 100%) */
-int16_t dshot_get_telemetry_invalid_percent(const struct dshot_controller *controller,
+/* Returns valid packet percentage in 0.01% units (10000 = perfect, 0 = no signal) */
+int16_t dshot_get_telemetry_quality_percent(const struct dshot_controller *controller,
                                             uint8_t channel);
 
 #endif

@@ -397,17 +397,18 @@ bool dshot_is_telemetry_active(const struct dshot_controller *controller) {
     return controller->num_channels > 0;
 }
 
-int16_t dshot_get_telemetry_invalid_percent(const struct dshot_controller *controller,
+int16_t dshot_get_telemetry_quality_percent(const struct dshot_controller *controller,
                                             uint8_t channel) {
     if (channel >= controller->num_channels) {
-        return 10000;
+        return 0;
     }
     const struct dshot_motor *motor = &controller->motor[channel];
     if (!(motor->telemetry_types & (1 << DSHOT_TELEMETRY_TYPE_ERPM))) {
-        return 10000;
+        return 0;
     }
     if (motor->quality.packet_count_sum == 0) {
         return 0;
     }
-    return (int16_t)(motor->quality.invalid_count_sum * 10000 / motor->quality.packet_count_sum);
+    uint32_t valid = motor->quality.packet_count_sum - motor->quality.invalid_count_sum;
+    return (int16_t)(valid * 10000 / motor->quality.packet_count_sum);
 }

@@ -4,6 +4,7 @@
  * No telemetry support (unlike DShot variant).
  */
 
+#include "../log.h"
 #include "pwm.h"
 #include <pico/error.h>
 #include <pico/stdio.h>
@@ -25,6 +26,7 @@
 
 static uint16_t thruster_values[NUM_MOTORS] = {PWM_NEUTRAL};
 static absolute_time_t last_comm_time;
+static bool comm_timed_out = true;
 
 static uint8_t calculate_checksum(const uint8_t *data, size_t len) {
     uint8_t checksum = 0;
@@ -66,11 +68,16 @@ static void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_val
             thruster_values[i] = PWM_NEUTRAL;
         }
         *usb_idx = 0;
+        if (!comm_timed_out) {
+            comm_timed_out = true;
+            log_warn("USB comm lost, motors neutral");
+        }
     }
 }
 
 int main() {
     stdio_init_all();
+    log_init();
 
     struct pwm_controller controller;
     uint pins[NUM_MOTORS] = {6, 7, 8, 9, 18, 19, 20, 21};
@@ -97,7 +104,10 @@ int main() {
         }
 
         if (usb_idx >= sizeof(usb_buf)) {
-            process_usb_packet(usb_buf, thruster_values, &last_comm_time);
+            if (process_usb_packet(usb_buf, thruster_values, &last_comm_time) && comm_timed_out) {
+                comm_timed_out = false;
+                log_info("PWM, 8 motors, USB comm active");
+            }
             usb_idx = 0;
         }
 

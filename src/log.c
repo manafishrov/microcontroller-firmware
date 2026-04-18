@@ -1,0 +1,69 @@
+#include "log.h"
+#include <pico/stdio.h>
+#include <pico/time.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+static uint32_t log_count;
+static absolute_time_t log_window_start;
+
+void log_init(void) {
+    log_count = 0;
+    log_window_start = get_absolute_time();
+}
+
+static bool rate_limit_check(void) {
+    absolute_time_t now = get_absolute_time();
+    if (absolute_time_diff_us(log_window_start, now) >= 1000000) {
+        log_window_start = now;
+        log_count = 0;
+    }
+    if (log_count >= LOG_MAX_PER_SECOND) {
+        return false;
+    }
+    log_count++;
+    return true;
+}
+
+static void send_log(enum log_level level, const char *message) {
+    if (!rate_limit_check()) {
+        return;
+    }
+
+    size_t msg_len = strlen(message);
+    if (msg_len > LOG_MAX_MESSAGE_SIZE) {
+        msg_len = LOG_MAX_MESSAGE_SIZE;
+    }
+
+    uint8_t header[3];
+    header[0] = LOG_START_BYTE;
+    header[1] = (uint8_t)level;
+    header[2] = (uint8_t)msg_len;
+
+    uint8_t checksum = 0;
+    for (size_t i = 0; i < 3; ++i) {
+        checksum ^= header[i];
+    }
+    for (size_t i = 0; i < msg_len; ++i) {
+        checksum ^= (uint8_t)message[i];
+    }
+
+    fwrite(header, 1, 3, stdout);
+    fwrite(message, 1, msg_len, stdout);
+    fwrite(&checksum, 1, 1, stdout);
+    fflush(stdout);
+}
+
+void log_info(const char *message) {
+    send_log(LOG_LEVEL_INFO, message);
+}
+
+void log_warn(const char *message) {
+    send_log(LOG_LEVEL_WARN, message);
+}
+
+void log_error(const char *message) {
+    send_log(LOG_LEVEL_ERROR, message);
+}
