@@ -418,7 +418,7 @@ static void send_quality_reports(struct dshot_controller *controller0,
             snprintf(buf, sizeof(buf), "Motor %d: signal degraded, cause: %s", i,
                      dominant_failure_name(&ctrl->motor[channel].stats));
             log_warn(buf);
-        } else if (quality >= QUALITY_WARN_THRESHOLD && quality_warned[i]) {
+        } else if (quality > QUALITY_WARN_THRESHOLD + 1000 && quality_warned[i]) {
             quality_warned[i] = false;
         }
     }

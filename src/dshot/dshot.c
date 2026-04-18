@@ -1,11 +1,13 @@
 /*
  * DShot protocol implementation for RP2040 PIO with bidirectional telemetry.
- * Derived from pio-dshot by Simon Wunderlich.
- * Original repository: https://github.com/simonwunderlich/pio-dshot
- * Licensed under the MIT License.
+ * TX derived from pio-dshot by Simon Wunderlich (MIT License).
+ * RX uses Betaflight-style oversampled edge detection with run-length decoding.
  *
  * EDT handling follows Betaflight's dshot.c:
  * https://github.com/betaflight/betaflight/blob/master/src/main/drivers/dshot.c
+ *
+ * Oversampled telemetry decoding adapted from Betaflight's dshot_bidir_pico.c:
+ * https://github.com/betaflight/betaflight/blob/master/src/platform/PICO/dshot_bidir_pico.c
  */
 
 #include "dshot.h"
@@ -20,7 +22,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Track PIO program state per PIO block (pio0/pio1) */
 static bool dshot_pio_prog_loaded[2] = {false, false};
 static uint dshot_pio_prog_offset[2] = {0, 0};
 
@@ -60,7 +61,183 @@ static const enum dshot_telemetry_type edt_type_lookup[8] = {
     DSHOT_TELEMETRY_TYPE_DEBUG3,  DSHOT_TELEMETRY_TYPE_STATE_EVENTS,
 };
 
-/* Configure PIO state machine pin for the given channel */
+/* ---- Oversampled telemetry decoder (Betaflight-derived) ---- */
+
+#define OVERSAMPLE_WORDS 4
+#define OVERSAMPLE_COMPLETION_WORDS 1
+#define OVERSAMPLE_TOTAL_WORDS (OVERSAMPLE_WORDS + OVERSAMPLE_COMPLETION_WORDS)
+#define MAX_EDGES 24
+#define PIO_CYCLES_PER_TX_BIT 125
+#define PIO_CYCLES_PER_SAMPLE 18
+#define RX_BIT_RATIO_NUM 5
+#define RX_BIT_RATIO_DEN 4
+
+enum decode_result {
+    DECODE_OK = 0,
+    DECODE_FAIL_EDGE_COUNT,
+    DECODE_FAIL_BIT_COUNT,
+    DECODE_FAIL_GCR,
+    DECODE_FAIL_CRC,
+};
+
+/*
+ * Samples per RX bit = (PIO_CYCLES_PER_TX_BIT * RX_BIT_RATIO_DEN)
+ *                      / (RX_BIT_RATIO_NUM * PIO_CYCLES_PER_SAMPLE)
+ *                    = (125 * 4) / (5 * 18) = 500 / 90 = 5.556...
+ * Default bits_per_sample = 1 / 5.556 = 0.18
+ */
+#define DEFAULT_BITS_PER_SAMPLE 0.18f
+
+#define CALIBRATION_FRAMES 32
+#define ZERO_RPM_EDGES 15
+#define ZERO_RPM_BIT_SPAN 18
+#define ZERO_RPM_VALUE 0xFFF0
+
+static uint8_t length_transitions[4];
+static bool calibration_complete;
+static uint32_t calibration_total_span;
+static int calibration_frame_count;
+
+static void set_length_transitions(float bits_per_sample, bool strict) {
+    int length = 0;
+    float bits = 0.5f;
+    int samples = 0;
+    while (length < 4) {
+        bits += bits_per_sample;
+        samples++;
+        if ((int)bits >= length + 1) {
+            length_transitions[length] = samples;
+            length++;
+        }
+    }
+    if (!strict) {
+        length_transitions[3] += 2;
+    }
+}
+
+/*
+ * Decode 4 words of oversampled telemetry into a 16-bit GCR value.
+ * Algorithm (from Betaflight):
+ *   1. Scan 128-bit sample stream for edge transitions using __builtin_clz
+ *   2. Record run lengths between edges
+ *   3. Convert run lengths to GCR bits via transition table
+ *   4. Reconstruct 21-bit GCR pattern (20 data + 1 start)
+ *   5. Decode 4 x 5-bit GCR symbols to nibbles, verify checksum
+ * Returns 16-bit value (12-bit data + 4-bit CRC) or DSHOT_TELEMETRY_INVALID.
+ */
+static enum decode_result decode_oversampled_telemetry(const uint32_t *buffer,
+                                                       uint32_t *out_value) {
+    static bool initialized;
+    if (!initialized) {
+        set_length_transitions(DEFAULT_BITS_PER_SAMPLE, false);
+        initialized = true;
+    }
+
+    bool ones = buffer[0] >> 31;
+    uint32_t w0 = buffer[0];
+    uint32_t w1 = buffer[1];
+    uint32_t w2 = buffer[2];
+    uint32_t w3 = buffer[3];
+    int shift_remaining = 128;
+    int edge_count = 0;
+    uint8_t edge_diffs[MAX_EDGES];
+
+    while (shift_remaining > 0 && edge_count < MAX_EDGES) {
+        uint32_t test = ones ? ~w0 : w0;
+        if (test == 0) {
+            break;
+        }
+        int run = __builtin_clz(test);
+        edge_diffs[edge_count++] = run;
+
+        int complement = 32 - run;
+        w0 = (w0 << run) | (w1 >> complement);
+        w1 = (w1 << run) | (w2 >> complement);
+        w2 = (w2 << run) | (w3 >> complement);
+        w3 = w3 << run;
+        ones = !ones;
+        shift_remaining -= run;
+    }
+
+    if (!ones && edge_count > 0) {
+        edge_count--;
+    }
+
+    if (edge_count < 2 || edge_count > 21) {
+        return DECODE_FAIL_EDGE_COUNT;
+    }
+
+    uint32_t core_gcr = 0;
+    uint32_t core_bits = 0;
+    for (int i = 0; i < edge_count; ++i) {
+        uint8_t diff = edge_diffs[i];
+        int len;
+        if (diff < length_transitions[1]) {
+            len = 1;
+        } else if (diff < length_transitions[2]) {
+            len = 2;
+        } else if (diff < length_transitions[3]) {
+            len = 3;
+        } else {
+            return DECODE_FAIL_GCR;
+        }
+        core_gcr <<= len;
+        core_gcr |= 1U << (len - 1U);
+        core_bits += len;
+        if (core_bits >= 21U) {
+            break;
+        }
+    }
+
+    int32_t padding = 21 - core_bits;
+    if (padding < 0) {
+        return DECODE_FAIL_BIT_COUNT;
+    }
+
+    uint32_t gcr20 = core_gcr << padding;
+    if (padding > 0) {
+        gcr20 |= 1U << (padding - 1);
+    }
+
+    uint8_t n3 = gcr_table[(gcr20 >> 15) & 0x1F];
+    uint8_t n2 = gcr_table[(gcr20 >> 10) & 0x1F];
+    uint8_t n1 = gcr_table[(gcr20 >> 5) & 0x1F];
+    uint8_t n0 = gcr_table[gcr20 & 0x1F];
+
+    if ((n0 | n1 | n2 | n3) & 0xF0) {
+        return DECODE_FAIL_GCR;
+    }
+
+    uint32_t value = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
+    uint32_t csum = value ^ (value >> 8);
+    csum = csum ^ (csum >> 4);
+    if ((csum & 0xF) != 0xF) {
+        return DECODE_FAIL_CRC;
+    }
+
+    if (!calibration_complete && value == ZERO_RPM_VALUE && edge_count == ZERO_RPM_EDGES) {
+        uint32_t span = 0;
+        for (int i = 1; i < ZERO_RPM_EDGES; ++i) {
+            span += edge_diffs[i];
+        }
+        if (span >= 70 && span <= 125) {
+            calibration_total_span += span;
+            calibration_frame_count++;
+        }
+        if (calibration_frame_count == CALIBRATION_FRAMES) {
+            float avg_span = (float)calibration_total_span / CALIBRATION_FRAMES;
+            float samples_per_bit = avg_span / ZERO_RPM_BIT_SPAN;
+            set_length_transitions(1.0f / samples_per_bit, true);
+            calibration_complete = true;
+        }
+    }
+
+    *out_value = value;
+    return DECODE_OK;
+}
+
+/* ---- End oversampled decoder ---- */
+
 static void dshot_sm_config_set_pin(struct dshot_controller *controller, int pin) {
     sm_config_set_out_pins(&controller->c, pin, 1);
     sm_config_set_set_pins(&controller->c, pin, 1);
@@ -81,7 +258,6 @@ void dshot_controller_init(struct dshot_controller *controller, uint16_t dshot_s
     controller->pin = pin;
     controller->command_last_time = get_absolute_time();
 
-    /* Invalidate throttle cache so first dshot_throttle call always computes frame */
     for (int i = 0; i < controller->num_channels; i++) {
         controller->motor[i].last_throttle_value = UINT16_MAX;
         dshot_throttle(controller, i, 0);
@@ -95,14 +271,12 @@ void dshot_controller_init(struct dshot_controller *controller, uint16_t dshot_s
 
     controller->c = pio_dshot_program_get_default_config(dshot_pio_prog_offset[pi]);
 
-    /* MSB-first shift for both TX (out) and RX (in), no autopush/pull */
     sm_config_set_out_shift(&controller->c, false, false, 32);
-    sm_config_set_in_shift(&controller->c, false, false, 32);
+    sm_config_set_in_shift(&controller->c, false, true, 32);
 
     dshot_sm_config_set_pin(controller, pin);
 
-    /* Clock divider: 40 PIO cycles per DShot bit */
-    float clkdiv = (float)clock_get_hz(clk_sys) / (1000.0F * (float)dshot_speed * 40.0F);
+    float clkdiv = (float)clock_get_hz(clk_sys) / (1000.0F * (float)dshot_speed * 125.0F);
     sm_config_set_clkdiv(&controller->c, clkdiv);
 
     pio_sm_init(pio, sm, dshot_pio_prog_offset[pi], &controller->c);
@@ -125,13 +299,11 @@ static uint32_t dshot_decode_erpm_telemetry_value(uint16_t value) {
         return 0;
     }
 
-    /* 3-bit exponent (bits 11:9), 9-bit mantissa (bits 8:0) */
     uint16_t period = (value & 0x01FF) << ((value & 0xFE00) >> 9);
     if (period == 0) {
         return DSHOT_TELEMETRY_INVALID;
     }
 
-    /* Convert period to eRPM * 100 with rounding: 60_000_000 / 100 = 600_000 */
     return (600000 + period / 2) / period;
 }
 
@@ -151,7 +323,6 @@ static void dshot_decode_telemetry_value(struct dshot_controller *controller, ui
     bool edt_active = controller->edt_always_decode ||
                       (motor->telemetry_types & DSHOT_EXTENDED_TELEMETRY_MASK) != 0;
 
-    /* Extract 4-bit type field: 3 bits type + 1 bit eRPM/EDT tag */
     unsigned telemetry_type = (raw_value & 0x0F00) >> 8;
     bool is_erpm = !edt_active || (telemetry_type & 0x01) || (telemetry_type == 0);
 
@@ -165,7 +336,6 @@ static void dshot_decode_telemetry_value(struct dshot_controller *controller, ui
     }
 }
 
-/* Update stored telemetry data and type bitmask */
 static void dshot_update_telemetry_data(struct dshot_motor *motor, enum dshot_telemetry_type type,
                                         uint32_t value) {
     motor->telemetry_data[type] = value;
@@ -202,51 +372,42 @@ static void dshot_update_telemetry_quality(struct dshot_telemetry_quality *quali
 }
 
 /*
- * Process received telemetry from PIO.
- * Decodes GCR, verifies CRC, extracts telemetry type/value, updates state.
- *
- * Bidirectional DShot response: 21 bits from PIO (1 start + 20 GCR data).
- * The 20 GCR bits decode to 4 nibbles = 16 bits (12-bit data + 4-bit CRC).
+ * Process oversampled telemetry received from PIO.
+ * Decodes 4 words of oversampled data via edge detection → run-length → GCR,
+ * then extracts telemetry type/value and updates motor state.
  */
-static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
+static void dshot_receive_oversampled(struct dshot_controller *controller, const uint32_t *buffer) {
     struct dshot_motor *motor = &controller->motor[controller->channel];
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
 
-    if (value == 0) {
+    if (buffer[0] == 0 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0) {
         motor->stats.rx_timeout++;
         dshot_update_telemetry_quality(&motor->quality, false, now_ms);
         return;
     }
 
-    /* Invert (bidirectional DShot uses inverted output) and decode NRZI→GCR */
-    value = ~value & 0x1FFFFF;
-    uint32_t gcr = value ^ (value >> 1);
-
-    /* Decode 4 GCR symbols (5 bits each) into 4 nibbles */
-    uint8_t n3 = gcr_table[(gcr >> 15) & 0x1F];
-    uint8_t n2 = gcr_table[(gcr >> 10) & 0x1F];
-    uint8_t n1 = gcr_table[(gcr >> 5) & 0x1F];
-    uint8_t n0 = gcr_table[gcr & 0x1F];
-
-    if ((n3 | n2 | n1 | n0) & 0xF0) {
-        motor->stats.rx_bad_gcr++;
+    uint32_t frame;
+    enum decode_result result = decode_oversampled_telemetry(buffer, &frame);
+    if (result != DECODE_OK) {
+        switch (result) {
+        case DECODE_FAIL_EDGE_COUNT:
+        case DECODE_FAIL_BIT_COUNT:
+        case DECODE_FAIL_GCR:
+            motor->stats.rx_bad_gcr++;
+            break;
+        case DECODE_FAIL_CRC:
+            motor->stats.rx_bad_crc++;
+            break;
+        default:
+            motor->stats.rx_bad_crc++;
+            break;
+        }
         dshot_update_telemetry_quality(&motor->quality, false, now_ms);
         return;
     }
 
-    uint16_t frame = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
+    uint16_t raw_value = (frame >> 4) & 0x0FFF;
 
-    /* CRC: inverted XOR of nibbles (bidirectional DShot always uses inverted CRC) */
-    uint16_t crc = ~((frame >> 4) ^ (frame >> 8) ^ (frame >> 12)) & 0x0F;
-    if (crc != (frame & 0x0F)) {
-        motor->stats.rx_bad_crc++;
-        dshot_update_telemetry_quality(&motor->quality, false, now_ms);
-        return;
-    }
-
-    uint16_t raw_value = frame >> 4;
-
-    /* Decode telemetry type and value */
     enum dshot_telemetry_type type;
     uint32_t decoded;
     dshot_decode_telemetry_value(controller, raw_value, &decoded, &type);
@@ -267,7 +428,6 @@ static void dshot_receive(struct dshot_controller *controller, uint32_t value) {
     }
 }
 
-/* Switch PIO state machine to the next channel (round-robin multiplexing) */
 static void dshot_cycle_channel(struct dshot_controller *controller) {
     pio_sm_set_enabled(controller->pio, controller->sm, false);
 
@@ -279,7 +439,6 @@ static void dshot_cycle_channel(struct dshot_controller *controller) {
     pio_sm_set_enabled(controller->pio, controller->sm, true);
 }
 
-/* Begin async DShot frame transmission for the current channel */
 void dshot_loop_async_start(struct dshot_controller *controller) {
     if (controller->num_channels > 1) {
         dshot_cycle_channel(controller);
@@ -288,20 +447,51 @@ void dshot_loop_async_start(struct dshot_controller *controller) {
     struct dshot_motor *motor = &controller->motor[controller->channel];
     if (pio_sm_is_tx_fifo_empty(controller->pio, controller->sm)) {
         motor->stats.tx_frames++;
-        /* Frame is inverted for PIO (active-low signaling with pull-up) */
         pio_sm_put(controller->pio, controller->sm, ~(uint32_t)motor->frame << 16);
-        /* Wait cycles between TX and RX: 25us at DShot bit rate */
-        uint32_t cycles = (25 * controller->speed * 40) / 1000;
+        uint32_t cycles = (25 * controller->speed * 125) / 1000;
         pio_sm_put(controller->pio, controller->sm, cycles);
     }
 }
 
-/* Complete async DShot cycle: receive telemetry and manage command state */
-void dshot_loop_async_complete(struct dshot_controller *controller) {
-    uint32_t recv = pio_sm_get_blocking(controller->pio, controller->sm);
-    dshot_receive(controller, recv);
+#define RX_READ_TIMEOUT_US 500
 
-    /* Decrement command counter; revert to throttle when command sequence completes */
+static bool dshot_read_rx_words(struct dshot_controller *controller, uint32_t *buffer) {
+    absolute_time_t deadline = make_timeout_time_us(RX_READ_TIMEOUT_US);
+    for (int i = 0; i < OVERSAMPLE_TOTAL_WORDS; i++) {
+        while (pio_sm_is_rx_fifo_empty(controller->pio, controller->sm)) {
+            if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
+                while (!pio_sm_is_rx_fifo_empty(controller->pio, controller->sm)) {
+                    (void)pio_sm_get(controller->pio, controller->sm);
+                }
+                return false;
+            }
+        }
+        uint32_t word = pio_sm_get(controller->pio, controller->sm);
+        if (i < OVERSAMPLE_WORDS) {
+            buffer[i] = word;
+        }
+    }
+    return true;
+}
+
+void dshot_loop_async_complete(struct dshot_controller *controller) {
+    uint32_t buffer[OVERSAMPLE_WORDS] = {0};
+    bool ok = dshot_read_rx_words(controller, buffer);
+
+    if (!ok) {
+        pio_sm_set_enabled(controller->pio, controller->sm, false);
+        pio_sm_init(controller->pio, controller->sm,
+                    dshot_pio_prog_offset[pio_index(controller->pio)], &controller->c);
+        pio_sm_set_enabled(controller->pio, controller->sm, true);
+
+        struct dshot_motor *motor = &controller->motor[controller->channel];
+        uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+        motor->stats.rx_timeout++;
+        dshot_update_telemetry_quality(&motor->quality, false, now_ms);
+    } else {
+        dshot_receive_oversampled(controller, buffer);
+    }
+
     struct dshot_motor *motor = &controller->motor[controller->channel];
     if (motor->command_counter > 0) {
         motor->command_counter--;
@@ -311,7 +501,6 @@ void dshot_loop_async_complete(struct dshot_controller *controller) {
         }
     }
 
-    /* Safety: zero all channels if no commands received within idle threshold */
     if (absolute_time_diff_us(controller->command_last_time, get_absolute_time()) >
         DSHOT_IDLE_THRESHOLD) {
         for (int i = 0; i < controller->num_channels; i++) {
@@ -320,7 +509,6 @@ void dshot_loop_async_complete(struct dshot_controller *controller) {
     }
 }
 
-/* Synchronous DShot loop: transmit frame and receive telemetry for one channel */
 void dshot_loop(struct dshot_controller *controller) {
     dshot_loop_async_start(controller);
     dshot_loop_async_complete(controller);
@@ -344,7 +532,6 @@ static uint16_t dshot_compute_frame(uint16_t throttle, int telemetry) {
     return (value << 4) | (crc & 0x0F);
 }
 
-/* Queue a DShot command to be sent for repeat_count consecutive frames */
 void dshot_command(struct dshot_controller *controller, uint16_t channel, uint16_t command,
                    uint8_t repeat_count) {
     if (channel >= controller->num_channels) {
@@ -353,12 +540,10 @@ void dshot_command(struct dshot_controller *controller, uint16_t channel, uint16
 
     struct dshot_motor *motor = &controller->motor[channel];
 
-    /* Commands use telemetry bit = 1 */
     motor->frame = dshot_compute_frame(command, 1);
     motor->current_command = command;
     motor->command_counter = repeat_count;
 
-    /* Clear EDT state when EDT is explicitly disabled */
     if (command == DSHOT_EXTENDED_TELEMETRY_DISABLE) {
         motor->telemetry_types = 0;
     }
@@ -366,7 +551,6 @@ void dshot_command(struct dshot_controller *controller, uint16_t channel, uint16
     dshot_mark_activity(controller);
 }
 
-/* Set throttle value for a channel. Deferred while a command sequence is active. */
 void dshot_throttle(struct dshot_controller *controller, uint16_t channel, uint16_t throttle) {
     if (channel >= controller->num_channels) {
         return;

@@ -24,6 +24,7 @@
         buildInputs = with pkgs; [
           pkg-config
           cmake
+          python3
           gcc-arm-embedded
           picotool
           pico-sdk-with-submodules
