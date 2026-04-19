@@ -13,6 +13,10 @@ void pwm_controller_init(struct pwm_controller *controller, uint *pins, uint num
     memset(controller, 0, sizeof(*controller));
     controller->num_channels = num_channels;
 
+    uint32_t clock_hz = clock_get_hz(clk_sys);
+    float divider = (float)clock_hz / (float)(PWM_FREQUENCY * PWM_STEPS);
+    bool slice_configured[NUM_PWM_SLICES] = {false};
+
     for (uint i = 0; i < num_channels; ++i) {
         controller->pin[i] = pins[i];
         gpio_set_function(pins[i], GPIO_FUNC_PWM);
@@ -20,13 +24,22 @@ void pwm_controller_init(struct pwm_controller *controller, uint *pins, uint num
         uint slice = pwm_gpio_to_slice_num(pins[i]);
         controller->slice[i] = slice;
 
-        /* Divider = sys_clk / (frequency * steps) gives 1us per PWM step */
-        uint32_t clock = clock_get_hz(clk_sys);
-        uint32_t divider = clock / (PWM_FREQUENCY * PWM_STEPS);
+        if (!slice_configured[slice]) {
+            pwm_set_clkdiv(slice, divider);
+            pwm_set_wrap(slice, PWM_WRAP);
+            pwm_set_enabled(slice, true);
+            slice_configured[slice] = true;
+        }
+    }
+}
 
-        pwm_set_clkdiv(slice, (float)divider);
-        pwm_set_wrap(slice, PWM_WRAP);
-        pwm_set_enabled(slice, true);
+void pwm_controller_deinit(struct pwm_controller *controller) {
+    for (uint i = 0; i < controller->num_channels; ++i) {
+        uint slice = controller->slice[i];
+        pwm_set_enabled(slice, false);
+        gpio_set_function(controller->pin[i], GPIO_FUNC_SIO);
+        gpio_set_dir(controller->pin[i], GPIO_OUT);
+        gpio_put(controller->pin[i], 0);
     }
 }
 
