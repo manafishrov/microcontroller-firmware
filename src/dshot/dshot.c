@@ -98,6 +98,15 @@ static bool calibration_complete;
 static uint32_t calibration_total_span;
 static int calibration_frame_count;
 
+static void set_length_transitions(float bits_per_sample, bool strict);
+
+void dshot_controller_reset_calibration(void) {
+    calibration_complete = false;
+    calibration_total_span = 0;
+    calibration_frame_count = 0;
+    set_length_transitions(DEFAULT_BITS_PER_SAMPLE, false);
+}
+
 static void set_length_transitions(float bits_per_sample, bool strict) {
     int length = 0;
     float bits = 0.5f;
@@ -281,6 +290,10 @@ void dshot_controller_init(struct dshot_controller *controller, uint16_t dshot_s
 
     pio_sm_init(pio, sm, dshot_pio_prog_offset[pi], &controller->c);
     pio_sm_set_enabled(pio, sm, true);
+}
+
+void dshot_controller_deinit(struct dshot_controller *controller) {
+    pio_sm_set_enabled(controller->pio, controller->sm, false);
 }
 
 void dshot_register_telemetry_cb(struct dshot_controller *controller,

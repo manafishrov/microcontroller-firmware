@@ -157,6 +157,8 @@ void dshot_loop_async_start(struct dshot_controller *controller);
 void dshot_loop_async_complete(struct dshot_controller *controller);
 
 void dshot_mark_activity(struct dshot_controller *controller);
+void dshot_controller_deinit(struct dshot_controller *controller);
+void dshot_controller_reset_calibration(void);
 
 /* Returns true if all motors have received at least one eRPM telemetry frame */
 bool dshot_is_telemetry_active(const struct dshot_controller *controller);

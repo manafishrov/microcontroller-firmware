@@ -1,14 +1,11 @@
 #ifndef DSHOT_CONTROL_H
 #define DSHOT_CONTROL_H
 
+#include "../motors.h"
 #include "dshot.h"
 #include <pico/time.h>
 #include <stdbool.h>
 #include <stdint.h>
-
-#define NUM_MOTORS_0 4
-#define NUM_MOTORS_1 4
-#define NUM_MOTORS (NUM_MOTORS_0 + NUM_MOTORS_1)
 
 #define CMD_THROTTLE_MIN_REVERSE 0
 #define CMD_THROTTLE_NEUTRAL 1000
