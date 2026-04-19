@@ -44,8 +44,8 @@ jobs:
 
       - name: Rename Assets for Release
         run: |
-          cp build/pico/firmware.uf2 firmware-pico.uf2
-          cp build/pico2/firmware.uf2 firmware-pico2.uf2
+          cp build/pico/firmware.uf2 pico.uf2
+          cp build/pico2/firmware.uf2 pico2.uf2
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -54,9 +54,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body: 'Release assets for ${{ github.ref_name }}.'
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
           files: |
-            firmware-pico.uf2
-            firmware-pico2.uf2
+            pico.uf2
+            pico2.uf2
