@@ -11,19 +11,44 @@ uint8_t usb_calculate_checksum(const uint8_t *data, size_t len) {
     return checksum;
 }
 
-size_t usb_poll_input(uint8_t *buf, size_t packet_size, size_t usb_idx) {
+usb_packet_kind_t usb_poll_multi(uint8_t *command_buf, size_t command_packet_size,
+                                 size_t *command_idx, uint8_t *config_buf,
+                                 size_t config_packet_size, size_t *config_idx) {
     int c = getchar_timeout_us(0);
     while (c != PICO_ERROR_TIMEOUT) {
-        if (usb_idx == 0 && (uint8_t)c != USB_INPUT_START_BYTE) {
-            usb_idx = 0;
-        } else if (usb_idx < packet_size) {
-            buf[usb_idx++] = (uint8_t)c;
-        } else {
-            usb_idx = 0;
+        uint8_t byte = (uint8_t)c;
+
+        if (*command_idx > 0) {
+            if (*command_idx < command_packet_size) {
+                command_buf[(*command_idx)++] = byte;
+            } else {
+                *command_idx = 0;
+            }
+
+            if (*command_idx >= command_packet_size) {
+                return USB_PACKET_COMMAND;
+            }
+        } else if (*config_idx > 0) {
+            if (*config_idx < config_packet_size) {
+                config_buf[(*config_idx)++] = byte;
+            } else {
+                *config_idx = 0;
+            }
+
+            if (*config_idx >= config_packet_size) {
+                return USB_PACKET_CONFIG;
+            }
+        } else if (byte == USB_INPUT_START_BYTE) {
+            command_buf[0] = byte;
+            *command_idx = 1;
+        } else if (byte == USB_CONFIG_START_BYTE) {
+            config_buf[0] = byte;
+            *config_idx = 1;
         }
+
         c = getchar_timeout_us(0);
     }
-    return usb_idx;
+    return USB_PACKET_NONE;
 }
 
 bool usb_parse_packet(const uint8_t *usb_buf, size_t packet_size, uint16_t *raw_values,
