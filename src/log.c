@@ -1,6 +1,7 @@
 #include "log.h"
 #include <pico/stdio.h>
 #include <pico/time.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -56,6 +57,15 @@ static void send_log(enum log_level level, const char *message) {
     fflush(stdout);
 }
 
+static void send_logf(enum log_level level, const char *format, va_list args) {
+    char message[LOG_MAX_MESSAGE_SIZE + 1];
+    int written = vsnprintf(message, sizeof(message), format, args);
+    if (written < 0) {
+        return;
+    }
+    send_log(level, message);
+}
+
 void log_info(const char *message) {
     send_log(LOG_LEVEL_INFO, message);
 }
@@ -66,4 +76,25 @@ void log_warn(const char *message) {
 
 void log_error(const char *message) {
     send_log(LOG_LEVEL_ERROR, message);
+}
+
+void log_infof(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    send_logf(LOG_LEVEL_INFO, format, args);
+    va_end(args);
+}
+
+void log_warnf(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    send_logf(LOG_LEVEL_WARN, format, args);
+    va_end(args);
+}
+
+void log_errorf(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    send_logf(LOG_LEVEL_ERROR, format, args);
+    va_end(args);
 }

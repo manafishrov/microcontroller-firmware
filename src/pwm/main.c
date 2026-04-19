@@ -5,6 +5,8 @@
  */
 
 #include "../log.h"
+#include "../usb_comm.h"
+#include "control.h"
 #include "pwm.h"
 #include <pico/error.h>
 #include <pico/stdio.h>
@@ -14,66 +16,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define NUM_MOTORS 8
-
-/* PWM pulse widths in microseconds (standard ESC range) */
-#define PWM_MIN 1000
-#define PWM_NEUTRAL 1500
-#define PWM_MAX 2000
-
-#define INPUT_START_BYTE 0x5A
-#define INPUT_PACKET_SIZE (1 + (NUM_MOTORS * 2) + 1)
-
 static uint16_t thruster_values[NUM_MOTORS] = {PWM_NEUTRAL};
 static absolute_time_t last_comm_time;
 static bool comm_timed_out = true;
-
-static uint8_t calculate_checksum(const uint8_t *data, size_t len) {
-    uint8_t checksum = 0;
-    for (size_t i = 0; i < len; ++i) {
-        checksum ^= data[i];
-    }
-    return checksum;
-}
-
-/* Map USB command (0-2000) to PWM pulse width (1000-2000us) */
-static bool process_usb_packet(uint8_t *usb_buf, uint16_t *thruster_values,
-                               absolute_time_t *last_comm_time) {
-    if (usb_buf[0] != INPUT_START_BYTE) {
-        return false;
-    }
-
-    uint8_t received_checksum = usb_buf[INPUT_PACKET_SIZE - 1];
-    uint8_t calculated_checksum = calculate_checksum(usb_buf, INPUT_PACKET_SIZE - 1);
-    if (received_checksum != calculated_checksum) {
-        return false;
-    }
-
-    for (int i = 0; i < NUM_MOTORS; ++i) {
-        uint16_t cmd = ((uint16_t)usb_buf[(2 * i) + 2] << 8) | usb_buf[(2 * i) + 1];
-        if (cmd > 2000) {
-            cmd = 2000;
-        }
-        uint16_t us = PWM_MIN + ((cmd * (PWM_MAX - PWM_MIN)) / 2000);
-        thruster_values[i] = us;
-    }
-    *last_comm_time = get_absolute_time();
-    return true;
-}
-
-static void check_timeout(absolute_time_t last_comm_time, uint16_t *thruster_values,
-                          size_t *usb_idx) {
-    if (absolute_time_diff_us(last_comm_time, get_absolute_time()) > 200 * 1000) {
-        for (int i = 0; i < NUM_MOTORS; ++i) {
-            thruster_values[i] = PWM_NEUTRAL;
-        }
-        *usb_idx = 0;
-        if (!comm_timed_out) {
-            comm_timed_out = true;
-            log_warn("USB comm lost, motors neutral");
-        }
-    }
-}
 
 int main() {
     stdio_init_all();
@@ -91,27 +36,19 @@ int main() {
     static size_t usb_idx = 0;
 
     while (true) {
-        int c = getchar_timeout_us(0);
-        while (c != PICO_ERROR_TIMEOUT) {
-            if (usb_idx == 0 && (uint8_t)c != INPUT_START_BYTE) {
-                usb_idx = 0;
-            } else if (usb_idx < sizeof(usb_buf)) {
-                usb_buf[usb_idx++] = (uint8_t)c;
-            } else {
-                usb_idx = 0;
-            }
-            c = getchar_timeout_us(0);
-        }
+        usb_idx = usb_poll_input(usb_buf, sizeof(usb_buf), usb_idx);
 
         if (usb_idx >= sizeof(usb_buf)) {
-            if (process_usb_packet(usb_buf, thruster_values, &last_comm_time) && comm_timed_out) {
+            if (pwm_process_usb_packet(usb_buf, thruster_values, &last_comm_time) &&
+                comm_timed_out) {
                 comm_timed_out = false;
                 log_info("PWM, 8 motors, USB comm active");
             }
             usb_idx = 0;
         }
 
-        check_timeout(last_comm_time, thruster_values, &usb_idx);
+        usb_check_timeout(last_comm_time, thruster_values, NUM_MOTORS, PWM_NEUTRAL, &usb_idx,
+                          &comm_timed_out);
         for (int i = 0; i < NUM_MOTORS; ++i) {
             pwm_set_throttle(&controller, i, thruster_values[i]);
         }

@@ -12,6 +12,7 @@
 #ifndef LOG_H
 #define LOG_H
 
+#include <stdarg.h>
 #include <stdint.h>
 
 #define LOG_START_BYTE 0xB5
@@ -30,5 +31,8 @@ void log_init(void);
 void log_info(const char *message);
 void log_warn(const char *message);
 void log_error(const char *message);
+void log_infof(const char *format, ...);
+void log_warnf(const char *format, ...);
+void log_errorf(const char *format, ...);
 
 #endif
