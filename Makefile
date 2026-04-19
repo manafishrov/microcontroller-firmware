@@ -7,7 +7,7 @@ SYSROOT_A = $(shell arm-none-eabi-gcc -print-sysroot)/include
 SYSROOT_B = /usr/arm-none-eabi/include
 SYSROOT_C = /usr/lib/arm-none-eabi/include
 
-.PHONY: build-pico build-pico2 flash-dshot-pico flash-pwm-pico flash-dshot-pico2 flash-pwm-pico2 clean format format-check lint lint-check help
+.PHONY: build-pico build-pico2 flash-pico flash-pico2 clean format format-check lint lint-check help
 
 build-pico:
 	mkdir -p $(BUILD_DIR_PICO)
@@ -17,17 +17,11 @@ build-pico2:
 	mkdir -p $(BUILD_DIR_PICO2)
 	cd $(BUILD_DIR_PICO2) && cmake -S $(CURDIR) -B . $(CMAKE_FLAGS_PICO2) && cmake --build .
 
-flash-dshot-pico: build-pico
-	picotool load $(BUILD_DIR_PICO)/dshot.uf2 -f
+flash-pico: build-pico
+	picotool load $(BUILD_DIR_PICO)/firmware.uf2 -f
 
-flash-pwm-pico: build-pico
-	picotool load $(BUILD_DIR_PICO)/pwm.uf2 -f
-
-flash-dshot-pico2: build-pico2
-	picotool load $(BUILD_DIR_PICO2)/dshot.uf2 -f
-
-flash-pwm-pico2: build-pico2
-	picotool load $(BUILD_DIR_PICO2)/pwm.uf2 -f
+flash-pico2: build-pico2
+	picotool load $(BUILD_DIR_PICO2)/firmware.uf2 -f
 
 clean:
 	rm -rf build
@@ -58,12 +52,10 @@ lint-check: build-pico
 
 help:
 	@echo "Available targets:"
-	@echo "  build-pico      - Build all firmware for Pico (pwm/pico.uf2 and dshot/pico.uf2)"
-	@echo "  build-pico2     - Build all firmware for Pico 2 (pwm/pico.uf2 and dshot/pico.uf2)"
-	@echo "  flash-dshot-pico   - Build and flash dshot firmware for Pico"
-	@echo "  flash-pwm-pico     - Build and flash pwm firmware for Pico"
-	@echo "  flash-dshot-pico2  - Build and flash dshot firmware for Pico 2"
-	@echo "  flash-pwm-pico2    - Build and flash pwm firmware for Pico 2"
+	@echo "  build-pico      - Build firmware for Pico"
+	@echo "  build-pico2     - Build firmware for Pico 2"
+	@echo "  flash-pico         - Build and flash unified firmware for Pico"
+	@echo "  flash-pico2        - Build and flash unified firmware for Pico 2"
 	@echo "  clean           - Clean build dirs"
 	@echo "  format          - Format C code"
 	@echo "  format-check    - Check C code formatting"

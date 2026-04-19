@@ -6,20 +6,29 @@ project(microcontroller_firmware)
 
 pico_sdk_init()
 
-set(PWM_EXE_NAME pwm)
+set(FIRMWARE_EXE_NAME firmware)
 
-add_executable(${PWM_EXE_NAME} src/pwm/main.c src/pwm/pwm.c src/pwm/control.c src/usb_comm.c src/log.c)
+add_executable(${FIRMWARE_EXE_NAME}
+    src/main.c
+    src/runtime_config.c
+    src/usb_comm.c
+    src/log.c
+    src/pwm/pwm.c
+    src/pwm/control.c
+    src/dshot/dshot.c
+    src/dshot/control.c
+    src/dshot/telemetry_usb.c
+)
 
-target_link_libraries(${PWM_EXE_NAME} pico_stdlib pico_stdio_usb hardware_clocks hardware_pwm)
+pico_generate_pio_header(${FIRMWARE_EXE_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/dshot/dshot.pio)
 
-pico_add_extra_outputs(${PWM_EXE_NAME})
+target_link_libraries(${FIRMWARE_EXE_NAME}
+    pico_stdlib
+    pico_stdio_usb
+    hardware_clocks
+    hardware_pwm
+    hardware_pio
+    hardware_sync
+)
 
-set(DSHOT_EXE_NAME dshot)
-
-add_executable(${DSHOT_EXE_NAME} src/dshot/main.c src/dshot/dshot.c src/dshot/control.c src/dshot/telemetry_usb.c src/usb_comm.c src/log.c)
-
-pico_generate_pio_header(${DSHOT_EXE_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/dshot/dshot.pio)
-
-target_link_libraries(${DSHOT_EXE_NAME} pico_stdlib pico_stdio_usb hardware_clocks hardware_pio hardware_sync)
-
-pico_add_extra_outputs(${DSHOT_EXE_NAME})
+pico_add_extra_outputs(${FIRMWARE_EXE_NAME})
