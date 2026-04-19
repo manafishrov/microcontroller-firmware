@@ -44,10 +44,8 @@ jobs:
 
       - name: Rename Assets for Release
         run: |
-          cp build/pico/pwm.uf2 pwm-pico.uf2
-          cp build/pico/dshot.uf2 dshot-pico.uf2
-          cp build/pico2/pwm.uf2 pwm-pico2.uf2
-          cp build/pico2/dshot.uf2 dshot-pico2.uf2
+          cp build/pico/firmware.uf2 firmware-pico.uf2
+          cp build/pico2/firmware.uf2 firmware-pico2.uf2
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -60,7 +58,5 @@ jobs:
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            pwm-pico.uf2
-            dshot-pico.uf2
-            pwm-pico2.uf2
-            dshot-pico2.uf2
+            firmware-pico.uf2
+            firmware-pico2.uf2

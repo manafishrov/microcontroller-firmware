@@ -1,7 +1,7 @@
 # Microcontroller Firmware
 
 Firmware for the Raspberry Pi Pico and Pico 2 used in the Manafish ROV to
-control thrusters. It supports two control protocols:
+control thrusters. It supports two runtime-selectable control protocols:
 
 - DShot (digital ESC control)
 - PWM (analog ESC control)
@@ -20,7 +20,7 @@ Manafish Pi, so you can develop directly on the device.
 
 If you have **[Nix](https://nixos.org/)** and **[direnv](https://direnv.net/)** installed:
 
-1. Enter the directory: `cd microcontroller-firmware`
+1. Enter the directory: `cd mcu-firmware`
 2. Run `direnv allow`
 
 This will automatically download and configure the Pico SDK, ARM toolchain,
@@ -37,12 +37,10 @@ Run `make help` to list all available targets.
 
 Key targets include:
 
-- `make build-pico` – Build DShot and PWM firmware for Pico
-- `make build-pico2` – Build DShot and PWM firmware for Pico 2
-- `make flash-dshot-pico` – Build and flash DShot firmware for Pico
-- `make flash-pwm-pico` – Build and flash PWM firmware for Pico
-- `make flash-dshot-pico2` – Build and flash DShot firmware for Pico 2
-- `make flash-pwm-pico2` – Build and flash PWM firmware for Pico 2
+- `make build-pico` – Build unified thruster firmware for Pico
+- `make build-pico2` – Build unified thruster firmware for Pico 2
+- `make flash-pico` – Build and flash unified firmware for Pico
+- `make flash-pico2` – Build and flash unified firmware for Pico 2
 - `make clean` – Remove build directories
 - `make format` – Format source code
 - `make format-check` – Verify formatting (useful for CI)
@@ -53,12 +51,11 @@ Key targets include:
 
 Compiled `.uf2` files appear in:
 
-- `build/pico/dshot.uf2` / `build/pico2/dshot.uf2`
-- `build/pico/pwm.uf2` / `build/pico2/pwm.uf2`
+- `build/pico/firmware.uf2` / `build/pico2/firmware.uf2`
 
 ### Flashing
 
-Use `make flash-dshot-pico` or `make flash-pwm-pico` (or the `-pico2` variants).
+Use `make flash-pico` or `make flash-pico2` for the unified firmware.
 Flashing works regardless of whether the Pico is in BOOTSEL mode—the device
 reboots automatically as needed.
 
