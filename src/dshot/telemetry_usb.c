@@ -9,7 +9,13 @@
 #define TELEMETRY_BATCH_HEADER_SIZE 2
 #define TELEMETRY_BATCH_FOOTER_SIZE 1
 
-static uint8_t telemetry_queue[TELEMETRY_QUEUE_CAPACITY][TELEMETRY_PACKET_SIZE];
+typedef struct {
+    uint8_t motor_id;
+    uint8_t type;
+    int32_t value;
+} telemetry_queue_entry_t;
+
+static telemetry_queue_entry_t telemetry_queue[TELEMETRY_QUEUE_CAPACITY];
 static uint16_t telemetry_queue_head = 0;
 static uint16_t telemetry_queue_tail = 0;
 
@@ -46,10 +52,10 @@ void dshot_telemetry_usb_flush(void) {
         while (telemetry_queue_tail != telemetry_queue_head &&
                batch[1] < TELEMETRY_FLUSH_BATCH_PACKETS &&
                batch_len + TELEMETRY_BATCH_ENTRY_SIZE + TELEMETRY_BATCH_FOOTER_SIZE <= sizeof(batch)) {
-            const uint8_t *packet = telemetry_queue[telemetry_queue_tail];
-            batch[batch_len] = packet[1];
-            batch[batch_len + 1] = packet[2];
-            memcpy(&batch[batch_len + 2], &packet[3], sizeof(int32_t));
+            const telemetry_queue_entry_t *entry = &telemetry_queue[telemetry_queue_tail];
+            batch[batch_len] = entry->motor_id;
+            batch[batch_len + 1] = entry->type;
+            memcpy(&batch[batch_len + 2], &entry->value, sizeof(entry->value));
             batch_len += TELEMETRY_BATCH_ENTRY_SIZE;
             batch[1]++;
             telemetry_queue_tail = telemetry_queue_advance(telemetry_queue_tail);
@@ -73,13 +79,10 @@ void dshot_telemetry_usb_send(uint8_t motor_id, uint8_t type, int32_t value) {
         telemetry_queue_tail = telemetry_queue_advance(telemetry_queue_tail);
     }
 
-    uint8_t *packet = telemetry_queue[telemetry_queue_head];
-    packet[0] = TELEMETRY_START_BYTE;
-    packet[1] = motor_id;
-    packet[2] = type;
-    memcpy(&packet[3], &value, 4);
-    packet[TELEMETRY_PACKET_SIZE - 1] =
-        usb_calculate_checksum(&packet[0], TELEMETRY_PACKET_SIZE - 1);
+    telemetry_queue_entry_t *entry = &telemetry_queue[telemetry_queue_head];
+    entry->motor_id = motor_id;
+    entry->type = type;
+    entry->value = value;
     telemetry_queue_head = next_head;
     restore_interrupts(irq_state);
 }
