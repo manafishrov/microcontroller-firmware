@@ -6,6 +6,8 @@
 
 #define TELEMETRY_QUEUE_CAPACITY 256
 #define TELEMETRY_FLUSH_BATCH_PACKETS 16
+#define TELEMETRY_BATCH_HEADER_SIZE 2
+#define TELEMETRY_BATCH_FOOTER_SIZE 1
 
 static uint8_t telemetry_queue[TELEMETRY_QUEUE_CAPACITY][TELEMETRY_PACKET_SIZE];
 static uint16_t telemetry_queue_head = 0;
@@ -26,7 +28,9 @@ void dshot_telemetry_usb_flush(void) {
     }
 
     while (true) {
-        uint8_t batch[TELEMETRY_FLUSH_BATCH_PACKETS * TELEMETRY_PACKET_SIZE];
+        uint8_t batch[TELEMETRY_BATCH_HEADER_SIZE +
+                      (TELEMETRY_FLUSH_BATCH_PACKETS * TELEMETRY_BATCH_ENTRY_SIZE) +
+                      TELEMETRY_BATCH_FOOTER_SIZE];
         size_t batch_len = 0;
         uint32_t irq_state = save_and_disable_interrupts();
 
@@ -35,15 +39,26 @@ void dshot_telemetry_usb_flush(void) {
             break;
         }
 
+        batch[0] = TELEMETRY_BATCH_START_BYTE;
+        batch[1] = 0;
+        batch_len = TELEMETRY_BATCH_HEADER_SIZE;
+
         while (telemetry_queue_tail != telemetry_queue_head &&
-               batch_len + TELEMETRY_PACKET_SIZE <= sizeof(batch)) {
-            memcpy(&batch[batch_len], telemetry_queue[telemetry_queue_tail], TELEMETRY_PACKET_SIZE);
-            batch_len += TELEMETRY_PACKET_SIZE;
+               batch[1] < TELEMETRY_FLUSH_BATCH_PACKETS &&
+               batch_len + TELEMETRY_BATCH_ENTRY_SIZE + TELEMETRY_BATCH_FOOTER_SIZE <= sizeof(batch)) {
+            const uint8_t *packet = telemetry_queue[telemetry_queue_tail];
+            batch[batch_len] = packet[1];
+            batch[batch_len + 1] = packet[2];
+            memcpy(&batch[batch_len + 2], &packet[3], sizeof(int32_t));
+            batch_len += TELEMETRY_BATCH_ENTRY_SIZE;
+            batch[1]++;
             telemetry_queue_tail = telemetry_queue_advance(telemetry_queue_tail);
         }
 
         restore_interrupts(irq_state);
 
+        batch[batch_len] = usb_calculate_checksum(batch, batch_len);
+        batch_len += TELEMETRY_BATCH_FOOTER_SIZE;
         fwrite(batch, 1, batch_len, stdout);
     }
 
