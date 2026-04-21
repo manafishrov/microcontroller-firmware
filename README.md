@@ -83,6 +83,27 @@ like `picocom` to debug:
 
 3. Exit with **Ctrl+A**, then **K** and confirm.
 
+## Development Hooks
+
+Install the Git hook once per clone:
+
+```sh
+pre-commit install
+```
+
+The pre-commit hook runs clang-format on committed C/C++ files before each
+commit. To run the same checks across the repository manually:
+
+```sh
+pre-commit run --all-files
+```
+
+To update hook versions later:
+
+```sh
+pre-commit autoupdate
+```
+
 ## License
 
 This project is licensed under the GNU Affero General Public License

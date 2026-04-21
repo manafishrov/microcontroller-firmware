@@ -31,6 +31,7 @@
           clang
           clang-tools
           picocom
+          pre-commit
         ];
         PICO_SDK_PATH = "${pico-sdk-with-submodules}/lib/pico-sdk";
       };
