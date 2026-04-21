@@ -40,7 +40,7 @@ format-check:
 	find . \( -name "*.c" -o -name "*.h" \) ! -path "./build/*" ! -path "./tests/unity/*" | xargs clang-format --dry-run --Werror
 
 lint: build-pico
-	find . -name "*.c" | grep -v build | xargs clang-tidy --fix-errors \
+	find src -name "*.c" | xargs clang-tidy --fix-errors \
 	-p $(BUILD_DIR_PICO)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
 	--extra-arg=-I$(ARM_GCC_INCLUDE) \
@@ -49,7 +49,7 @@ lint: build-pico
 	--extra-arg=-I$(SYSROOT_C)
 
 lint-check: build-pico
-	find . -name "*.c" | grep -v build | xargs clang-tidy \
+	find src -name "*.c" | xargs clang-tidy --warnings-as-errors=* \
 	-p $(BUILD_DIR_PICO)/compile_commands.json \
 	-header-filter="^$(CURDIR)/src/.*" \
 	--extra-arg=-I$(ARM_GCC_INCLUDE) \

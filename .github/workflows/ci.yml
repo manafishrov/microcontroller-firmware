@@ -16,6 +16,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
 
+    - name: Run unit tests
+      run: make test
+
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -32,6 +35,3 @@ jobs:
 
     - name: Run clang-tidy lint
       run: make lint-check
-
-    - name: Run unit tests
-      run: make test
