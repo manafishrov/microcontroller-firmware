@@ -13,8 +13,6 @@
 #include <pico/types.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <string.h>
 
 #define DSHOT_PIO pio0
 #define DSHOT_SM_0 0
