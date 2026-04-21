@@ -1,6 +1,8 @@
 #include "runtime_config.h"
+#include "stdbool.h"
 #include "usb_comm.h"
 #include "version.h"
+#include <stdint.h>
 #include <stdio.h>
 
 static bool mcu_supports_dshot_1200(void) {

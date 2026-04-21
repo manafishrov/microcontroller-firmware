@@ -1,6 +1,7 @@
 #include "pwm.h"
 #include <hardware/clocks.h>
 #include <hardware/gpio.h>
+#include <hardware/platform_defs.h>
 #include <hardware/pwm.h>
 #include <hardware/structs/clocks.h>
 #include <hardware/structs/io_bank0.h>

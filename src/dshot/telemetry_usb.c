@@ -1,6 +1,9 @@
 #include "telemetry_usb.h"
 #include "../usb_comm.h"
+#include "dshot.h"
+#include "stdbool.h"
 #include <hardware/sync.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -56,7 +59,8 @@ void dshot_telemetry_usb_flush(void) {
 
         while (telemetry_queue_tail != telemetry_queue_head &&
                batch[1] < TELEMETRY_FLUSH_BATCH_PACKETS &&
-               batch_len + TELEMETRY_BATCH_ENTRY_SIZE + TELEMETRY_BATCH_FOOTER_SIZE <= sizeof(batch)) {
+               batch_len + TELEMETRY_BATCH_ENTRY_SIZE + TELEMETRY_BATCH_FOOTER_SIZE <=
+                   sizeof(batch)) {
             const telemetry_queue_entry_t *entry = &telemetry_queue[telemetry_queue_tail];
             batch[batch_len] = entry->motor_id;
             batch[batch_len + 1] = entry->type;

@@ -1,7 +1,11 @@
 #include "control.h"
-#include "../log.h"
+#include "/Users/michaelbrusegard/Projects/manafishrov/mcu-firmware/src/motors.h"
+#include "dshot.h"
+#include "stdbool.h"
 #include "telemetry_usb.h"
 #include <pico/time.h>
+#include <pico/types.h>
+#include <stdint.h>
 
 uint16_t dshot_translate_throttle_to_command(uint16_t cmd_throttle) {
     if (cmd_throttle == CMD_THROTTLE_NEUTRAL) {

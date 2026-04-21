@@ -16,6 +16,7 @@
 #include <hardware/gpio.h>
 #include <hardware/pio.h>
 #include <hardware/structs/clocks.h>
+#include <hardware/structs/io_bank0.h>
 #include <pico/time.h>
 #include <pico/types.h>
 #include <stdbool.h>
@@ -100,6 +101,144 @@ static int calibration_frame_count;
 
 static void set_length_transitions(float bits_per_sample, bool strict);
 
+static void ensure_decoder_initialized(void) {
+    static bool initialized;
+
+    if (!initialized) {
+        set_length_transitions(DEFAULT_BITS_PER_SAMPLE, false);
+        initialized = true;
+    }
+}
+
+static int collect_edge_diffs(const uint32_t *buffer, uint8_t *edge_diffs) {
+    bool ones = buffer[0] >> 31;
+    uint32_t w0 = buffer[0];
+    uint32_t w1 = buffer[1];
+    uint32_t w2 = buffer[2];
+    uint32_t w3 = buffer[3];
+    int shift_remaining = 128;
+    int edge_count = 0;
+
+    while (shift_remaining > 0 && edge_count < MAX_EDGES) {
+        uint32_t test = ones ? ~w0 : w0;
+        if (test == 0) {
+            break;
+        }
+
+        int run = __builtin_clz(test);
+        int complement = 32 - run;
+
+        edge_diffs[edge_count++] = run;
+        w0 = (w0 << run) | (w1 >> complement);
+        w1 = (w1 << run) | (w2 >> complement);
+        w2 = (w2 << run) | (w3 >> complement);
+        w3 = w3 << run;
+        ones = !ones;
+        shift_remaining -= run;
+    }
+
+    if (!ones && edge_count > 0) {
+        edge_count--;
+    }
+
+    return edge_count;
+}
+
+static int decode_run_length(uint8_t diff) {
+    if (diff < length_transitions[1]) {
+        return 1;
+    }
+    if (diff < length_transitions[2]) {
+        return 2;
+    }
+    if (diff < length_transitions[3]) {
+        return 3;
+    }
+    return 0;
+}
+
+static enum decode_result build_gcr_word(const uint8_t *edge_diffs, int edge_count,
+                                         uint32_t *gcr20_out) {
+    if (edge_count < 2 || edge_count > 21) {
+        return DECODE_FAIL_EDGE_COUNT;
+    }
+
+    uint32_t core_gcr = 0;
+    uint32_t core_bits = 0;
+
+    for (int i = 0; i < edge_count; ++i) {
+        int len = decode_run_length(edge_diffs[i]);
+        if (len == 0) {
+            return DECODE_FAIL_GCR;
+        }
+
+        core_gcr <<= len;
+        core_gcr |= 1U << (len - 1U);
+        core_bits += len;
+        if (core_bits >= 21U) {
+            break;
+        }
+    }
+
+    int32_t padding = 21 - core_bits;
+    if (padding < 0) {
+        return DECODE_FAIL_BIT_COUNT;
+    }
+
+    *gcr20_out = core_gcr << padding;
+    if (padding > 0) {
+        *gcr20_out |= 1U << (padding - 1);
+    }
+
+    return DECODE_OK;
+}
+
+static enum decode_result decode_gcr_word(uint32_t gcr20, uint32_t *out_value) {
+    uint8_t n3 = gcr_table[(gcr20 >> 15) & 0x1F];
+    uint8_t n2 = gcr_table[(gcr20 >> 10) & 0x1F];
+    uint8_t n1 = gcr_table[(gcr20 >> 5) & 0x1F];
+    uint8_t n0 = gcr_table[gcr20 & 0x1F];
+
+    if ((n0 | n1 | n2 | n3) & 0xF0) {
+        return DECODE_FAIL_GCR;
+    }
+
+    uint32_t value = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
+    uint32_t csum = value ^ (value >> 8);
+
+    csum ^= csum >> 4;
+    if ((csum & 0xF) != 0xF) {
+        return DECODE_FAIL_CRC;
+    }
+
+    *out_value = value;
+    return DECODE_OK;
+}
+
+static void update_zero_rpm_calibration(const uint8_t *edge_diffs, int edge_count, uint32_t value) {
+    if (calibration_complete || value != ZERO_RPM_VALUE || edge_count != ZERO_RPM_EDGES) {
+        return;
+    }
+
+    uint32_t span = 0;
+    for (int i = 1; i < ZERO_RPM_EDGES; ++i) {
+        span += edge_diffs[i];
+    }
+
+    if (span >= 70 && span <= 125) {
+        calibration_total_span += span;
+        calibration_frame_count++;
+    }
+
+    if (calibration_frame_count == CALIBRATION_FRAMES) {
+        float avg_span = (float)calibration_total_span / CALIBRATION_FRAMES;
+        float samples_per_bit = avg_span / ZERO_RPM_BIT_SPAN;
+
+        set_length_transitions(1.0f / samples_per_bit, true);
+        calibration_complete = true;
+    }
+}
+
 void dshot_controller_reset_calibration(void) {
     calibration_complete = false;
     calibration_total_span = 0;
@@ -136,112 +275,24 @@ static void set_length_transitions(float bits_per_sample, bool strict) {
  */
 static enum decode_result decode_oversampled_telemetry(const uint32_t *buffer,
                                                        uint32_t *out_value) {
-    static bool initialized;
-    if (!initialized) {
-        set_length_transitions(DEFAULT_BITS_PER_SAMPLE, false);
-        initialized = true;
-    }
-
-    bool ones = buffer[0] >> 31;
-    uint32_t w0 = buffer[0];
-    uint32_t w1 = buffer[1];
-    uint32_t w2 = buffer[2];
-    uint32_t w3 = buffer[3];
-    int shift_remaining = 128;
-    int edge_count = 0;
+    uint32_t gcr20;
     uint8_t edge_diffs[MAX_EDGES];
+    enum decode_result result;
 
-    while (shift_remaining > 0 && edge_count < MAX_EDGES) {
-        uint32_t test = ones ? ~w0 : w0;
-        if (test == 0) {
-            break;
-        }
-        int run = __builtin_clz(test);
-        edge_diffs[edge_count++] = run;
+    ensure_decoder_initialized();
 
-        int complement = 32 - run;
-        w0 = (w0 << run) | (w1 >> complement);
-        w1 = (w1 << run) | (w2 >> complement);
-        w2 = (w2 << run) | (w3 >> complement);
-        w3 = w3 << run;
-        ones = !ones;
-        shift_remaining -= run;
+    int edge_count = collect_edge_diffs(buffer, edge_diffs);
+    result = build_gcr_word(edge_diffs, edge_count, &gcr20);
+    if (result != DECODE_OK) {
+        return result;
     }
 
-    if (!ones && edge_count > 0) {
-        edge_count--;
+    result = decode_gcr_word(gcr20, out_value);
+    if (result != DECODE_OK) {
+        return result;
     }
 
-    if (edge_count < 2 || edge_count > 21) {
-        return DECODE_FAIL_EDGE_COUNT;
-    }
-
-    uint32_t core_gcr = 0;
-    uint32_t core_bits = 0;
-    for (int i = 0; i < edge_count; ++i) {
-        uint8_t diff = edge_diffs[i];
-        int len;
-        if (diff < length_transitions[1]) {
-            len = 1;
-        } else if (diff < length_transitions[2]) {
-            len = 2;
-        } else if (diff < length_transitions[3]) {
-            len = 3;
-        } else {
-            return DECODE_FAIL_GCR;
-        }
-        core_gcr <<= len;
-        core_gcr |= 1U << (len - 1U);
-        core_bits += len;
-        if (core_bits >= 21U) {
-            break;
-        }
-    }
-
-    int32_t padding = 21 - core_bits;
-    if (padding < 0) {
-        return DECODE_FAIL_BIT_COUNT;
-    }
-
-    uint32_t gcr20 = core_gcr << padding;
-    if (padding > 0) {
-        gcr20 |= 1U << (padding - 1);
-    }
-
-    uint8_t n3 = gcr_table[(gcr20 >> 15) & 0x1F];
-    uint8_t n2 = gcr_table[(gcr20 >> 10) & 0x1F];
-    uint8_t n1 = gcr_table[(gcr20 >> 5) & 0x1F];
-    uint8_t n0 = gcr_table[gcr20 & 0x1F];
-
-    if ((n0 | n1 | n2 | n3) & 0xF0) {
-        return DECODE_FAIL_GCR;
-    }
-
-    uint32_t value = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
-    uint32_t csum = value ^ (value >> 8);
-    csum = csum ^ (csum >> 4);
-    if ((csum & 0xF) != 0xF) {
-        return DECODE_FAIL_CRC;
-    }
-
-    if (!calibration_complete && value == ZERO_RPM_VALUE && edge_count == ZERO_RPM_EDGES) {
-        uint32_t span = 0;
-        for (int i = 1; i < ZERO_RPM_EDGES; ++i) {
-            span += edge_diffs[i];
-        }
-        if (span >= 70 && span <= 125) {
-            calibration_total_span += span;
-            calibration_frame_count++;
-        }
-        if (calibration_frame_count == CALIBRATION_FRAMES) {
-            float avg_span = (float)calibration_total_span / CALIBRATION_FRAMES;
-            float samples_per_bit = avg_span / ZERO_RPM_BIT_SPAN;
-            set_length_transitions(1.0f / samples_per_bit, true);
-            calibration_complete = true;
-        }
-    }
-
-    *out_value = value;
+    update_zero_rpm_calibration(edge_diffs, edge_count, *out_value);
     return DECODE_OK;
 }
 

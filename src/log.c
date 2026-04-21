@@ -1,6 +1,6 @@
 #include "log.h"
-#include <pico/stdio.h>
 #include <pico/time.h>
+#include <pico/types.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
