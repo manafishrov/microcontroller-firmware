@@ -69,8 +69,10 @@ static void set_all_commands_neutral(void) {
 
 static void deinit_protocol(thruster_protocol_t protocol) {
     if (protocol == THRUSTER_PROTOCOL_DSHOT && dshot_initialized) {
+        dshot_telemetry_usb_flush();
         dshot_controller_deinit(&dshot_controller0);
         dshot_controller_deinit(&dshot_controller1);
+        dshot_telemetry_usb_reset();
         dshot_initialized = false;
     } else if (protocol == THRUSTER_PROTOCOL_PWM && pwm_initialized) {
         pwm_controller_deinit(&pwm_controller);

@@ -19,6 +19,7 @@ typedef struct {
 } dshot_telemetry_context_t;
 
 void dshot_telemetry_usb_init(void);
+void dshot_telemetry_usb_reset(void);
 void dshot_telemetry_usb_send(uint8_t motor_id, uint8_t type, int32_t value);
 void dshot_telemetry_usb_flush(void);
 void dshot_telemetry_callback(void *context, int channel, enum dshot_telemetry_type type,

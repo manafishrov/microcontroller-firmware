@@ -28,6 +28,11 @@ void dshot_telemetry_usb_init(void) {
     telemetry_queue_tail = 0;
 }
 
+void dshot_telemetry_usb_reset(void) {
+    telemetry_queue_head = 0;
+    telemetry_queue_tail = 0;
+}
+
 void dshot_telemetry_usb_flush(void) {
     if (telemetry_queue_tail == telemetry_queue_head) {
         return;

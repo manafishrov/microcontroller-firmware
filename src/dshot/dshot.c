@@ -293,7 +293,24 @@ void dshot_controller_init(struct dshot_controller *controller, uint16_t dshot_s
 }
 
 void dshot_controller_deinit(struct dshot_controller *controller) {
+    if (controller->num_channels == 0) {
+        memset(controller, 0, sizeof(*controller));
+        return;
+    }
+
     pio_sm_set_enabled(controller->pio, controller->sm, false);
+    pio_sm_clear_fifos(controller->pio, controller->sm);
+    pio_sm_restart(controller->pio, controller->sm);
+
+    for (uint8_t i = 0; i < controller->num_channels; ++i) {
+        uint gpio = controller->pin + i;
+        gpio_set_function(gpio, GPIO_FUNC_SIO);
+        gpio_disable_pulls(gpio);
+        gpio_set_dir(gpio, GPIO_OUT);
+        gpio_put(gpio, 0);
+    }
+
+    memset(controller, 0, sizeof(*controller));
 }
 
 void dshot_register_telemetry_cb(struct dshot_controller *controller,
