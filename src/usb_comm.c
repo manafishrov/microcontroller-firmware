@@ -1,10 +1,10 @@
 #include "usb_comm.h"
 #include "log.h"
-#include "stdbool.h"
 #include <pico/error.h>
 #include <pico/stdio.h>
 #include <pico/time.h>
 #include <pico/types.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

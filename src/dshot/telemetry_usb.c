@@ -1,8 +1,8 @@
 #include "telemetry_usb.h"
 #include "../usb_comm.h"
 #include "dshot.h"
-#include "stdbool.h"
 #include <hardware/sync.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>

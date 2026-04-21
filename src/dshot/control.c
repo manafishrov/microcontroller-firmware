@@ -1,10 +1,10 @@
 #include "control.h"
-#include "/Users/michaelbrusegard/Projects/manafishrov/mcu-firmware/src/motors.h"
+#include "../motors.h"
 #include "dshot.h"
-#include "stdbool.h"
 #include "telemetry_usb.h"
 #include <pico/time.h>
 #include <pico/types.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 uint16_t dshot_translate_throttle_to_command(uint16_t cmd_throttle) {

@@ -1,7 +1,7 @@
 #include "runtime_config.h"
-#include "stdbool.h"
 #include "usb_comm.h"
 #include "version.h"
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 
