@@ -39,11 +39,9 @@ static dshot_telemetry_context_t dshot_context0 = {.controller_base_global_id = 
 static dshot_telemetry_context_t dshot_context1 = {.controller_base_global_id = NUM_MOTORS_0};
 static bool pwm_initialized = false;
 static bool dshot_initialized = false;
+static bool runtime_config_received = false;
 
-static mcu_runtime_config_t current_config = {
-    .protocol = THRUSTER_PROTOCOL_DSHOT,
-    .dshot_speed = 300,
-};
+static mcu_runtime_config_t current_config = {0};
 
 static void send_quality_reports(void) {
     for (int i = 0; i < NUM_MOTORS; i++) {
@@ -138,12 +136,15 @@ static void hold_neutral_before_switch(void) {
 static void apply_runtime_config(mcu_runtime_config_t config) {
     mcu_runtime_config_validate(&config);
 
-    bool switching = (dshot_initialized || pwm_initialized);
+    bool switching = runtime_config_received && (dshot_initialized || pwm_initialized);
     if (switching) {
         hold_neutral_before_switch();
     }
 
-    deinit_protocol(current_config.protocol);
+    if (runtime_config_received) {
+        deinit_protocol(current_config.protocol);
+    }
+
     current_config = config;
 
     if (current_config.protocol == THRUSTER_PROTOCOL_DSHOT) {
@@ -152,11 +153,16 @@ static void apply_runtime_config(mcu_runtime_config_t config) {
         init_pwm_protocol();
     }
 
+    runtime_config_received = true;
     comm_timed_out = true;
     mcu_runtime_config_send_version(&current_config);
 }
 
 static void handle_command_packet(uint8_t *command_buf) {
+    if (!runtime_config_received) {
+        return;
+    }
+
     if (!usb_parse_packet(command_buf, INPUT_PACKET_SIZE, command_values, NUM_MOTORS,
                           &last_comm_time)) {
         return;
@@ -183,7 +189,7 @@ static void handle_config_packet(uint8_t *config_buf) {
         return;
     }
 
-    if (new_config.protocol == current_config.protocol &&
+    if (runtime_config_received && new_config.protocol == current_config.protocol &&
         new_config.dshot_speed == current_config.dshot_speed) {
         mcu_runtime_config_send_version(&current_config);
         return;
@@ -215,7 +221,7 @@ int main(void) {
 
     set_all_commands_neutral();
     last_comm_time = get_absolute_time();
-    apply_runtime_config(current_config);
+    log_info("Waiting for runtime config from main firmware");
 
     static uint8_t command_buf[INPUT_PACKET_SIZE];
     static uint8_t config_buf[USB_CONFIG_PACKET_SIZE];
@@ -237,6 +243,10 @@ int main(void) {
 
         usb_check_timeout(last_comm_time, command_values, NUM_MOTORS, CMD_THROTTLE_NEUTRAL,
                           &command_idx, &comm_timed_out);
+
+        if (!runtime_config_received) {
+            continue;
+        }
 
         if (current_config.protocol == THRUSTER_PROTOCOL_DSHOT) {
             dshot_send_commands(command_values, &dshot_controller0, &dshot_controller1);
