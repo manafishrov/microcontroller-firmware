@@ -32,3 +32,6 @@ jobs:
 
     - name: Run clang-tidy lint
       run: make lint-check
+
+    - name: Run unit tests
+      run: make test

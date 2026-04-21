@@ -31,8 +31,8 @@ void log_init(void);
 void log_info(const char *message);
 void log_warn(const char *message);
 void log_error(const char *message);
-void log_infof(const char *format, ...);
-void log_warnf(const char *format, ...);
-void log_errorf(const char *format, ...);
+void log_infof(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void log_warnf(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void log_errorf(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
 #endif
