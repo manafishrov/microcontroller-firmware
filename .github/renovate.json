@@ -18,7 +18,7 @@
   "vulnerabilityAlerts": {
     "labels": ["dependencies", "security"]
   },
-  "enabledManagers": ["nix", "github-actions", "cmake", "custom.regex"],
+  "enabledManagers": ["nix", "github-actions", "custom.regex"],
   "nix": {
     "enabled": true
   },
